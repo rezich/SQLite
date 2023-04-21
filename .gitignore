@@ -1,0 +1,12 @@
+**/.build
+*.exe
+*.pdb
+*.dot
+*.exp
+*.db
+*.db-shm
+*.db-wal
+!lib/**/*.dll
+.vs
+*.rdbg
+example/bin
