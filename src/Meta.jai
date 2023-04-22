@@ -4,7 +4,6 @@ prebuild_step :: (w: Workspace) {
     options := get_build_options(w);
     DLL_NAME :: "sqlite3.dll";
     dll_destination := sprint("%1/%2", options.output_path, DLL_NAME);
-    log(dll_destination);
     if !file_exists(dll_destination) then copy_file(sprint("%1%2", #filepath, DLL_NAME), dll_destination);
     array_reset(*model_names);
 }
@@ -104,9 +103,9 @@ XX                  );
                             if field.tag == .ONE_TO_MANY then continue;
                             append(*database_schema_builder, ",\n");
                             if field.tag == {
+                                case .BOOL; #through;
                                 case .INTEGER; print_to_builder(*database_schema_builder, "    %  INTEGER", field.name);
                                 case .FLOAT; print_to_builder(*database_schema_builder, "    % REAL", field.name);
-                                case .BOOL; print_to_builder(*database_schema_builder, "    %  INTEGER", field.name);
                                 case .STRING; print_to_builder(*database_schema_builder, "    %  TEXT", field.name);
                                 case .FOREIGN_KEY;
                                     fk_field := cast(*Field_Info_Foreign_Key) field;
