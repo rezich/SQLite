@@ -18,6 +18,7 @@ delete(obj)
 
 ORM :: struct {
     DELETE_DATABASE_EVERY_RUN :: true; // for testing
+    INTERNAL_COLUMN_COUNT :: 3; // id, created, modified
 
     Model :: struct {
         id: ID;
@@ -28,28 +29,17 @@ ORM :: struct {
     }
 
     Cached :: struct(type: Type) #modify { return is_a_model(type); } {
+        fetch_id: type.ID;
         using pointer: *type;
     }
 
-    /*generate_schema_for :: ($model_types: ..Type) -> string #modify {
-        for model_types if !is_a_model(it) then return false;
-        return true;
-    }{
-        sb_schema: String_Builder;
-        for model_types {
-            // ...
-        }
-        return builder_to_string(*sb_schema);
-    }*/
-
     init :: (filename: string) #expand {
-        `set_model_infos(); // this step will be replaced with something much simpler soon
         set_working_directory((#import "String").path_strip_filename((#import "System").get_path_of_running_executable()));
         database_already_existed := (#import "File_Utilities").file_exists(filename);
         #if DELETE_DATABASE_EVERY_RUN { (#import "File").file_delete(filename); database_already_existed = false; }
         { result, error := open(filename); AssertIfError(); }
         if !database_already_existed {
-            { result, error := exec(`database_schema); AssertIfError(); }
+            { result, error := exec(`DATABASE_SCHEMA); AssertIfError(); }
             for string.[
                 "journal_mode = WAL",
                 "synchronous = NORMAL",
@@ -70,6 +60,7 @@ ORM :: struct {
             for serializable_members_of(T) {
                 if it_index != 0 then append(*sb_values, ", ");
                 append(*sb_values, it.name);
+                if member_is_foreign_key(it) then append(*sb_values, "_id");
                 if it_index != 0 then append(*sb_question_marks, ", ");
                 append(*sb_question_marks, "?");
             }
@@ -85,10 +76,13 @@ ORM :: struct {
             sb: String_Builder;
             question_mark_index := 1;
             for serializable_members_of(T) {
-                append(*sb, sprint(#string XX
+                if member_is_foreign_key(it) then print_to_builder(*sb, #string XX
+        result = bind(statement, %1, id_or_fetch_id(_obj.%2));
+XX,             question_mark_index, it.name);
+                else print_to_builder(*sb, #string XX
         result = bind(statement, %1, %3_obj.%2);
-        if result != .OK then return result, .{};
-    XX,         question_mark_index, it.name, get_sqlite_cast_string_for_model_member(it)));
+XX,             question_mark_index, it.name, get_sqlite_cast_string_for_model_member(it));
+                append(*sb, "if result != .OK then return result, .{};");
                 question_mark_index += 1;
             }
             return builder_to_string(*sb);
@@ -110,7 +104,7 @@ ORM :: struct {
         if result != .OK then return result, .{};
 
         #insert #run sprint("cache := context.db_cache._%1;", T);
-        return result, .{table_set(*cache, obj.id, obj)};
+        return result, .{obj.id, table_set(*cache, obj.id, obj)};
     }
 
     update :: (cached_obj: $T/Cached) -> result: Result {
@@ -133,10 +127,10 @@ ORM :: struct {
             sb: String_Builder;
             for serializable_members_of(T.type) {
                 question_mark_index := it_index + 1;
-                append(*sb, sprint(#string XX
+                print_to_builder(*sb, #string XX
         result = bind(statement, %1, %3cached_obj.%2);
         if result != .OK then return result;
-    XX,         question_mark_index, it.name, get_sqlite_cast_string_for_model_member(it)));
+    XX,         question_mark_index, it.name, get_sqlite_cast_string_for_model_member(it));
             }
             return builder_to_string(*sb);
         }
@@ -163,6 +157,7 @@ ORM :: struct {
             for serializable_members_of(type) {
                 if it_index != 0 then append(*sb, ", ");
                 append(*sb, it.name);
+                if member_is_foreign_key(it) then append(*sb, "_id");
             }
             return sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2 WHERE id = ?;", builder_to_string(*sb), type);
         }
@@ -183,32 +178,7 @@ ORM :: struct {
             result = step(statement);
             if result == .ROW {
                 got_result = true;
-                obj.id       = xx column_int64(statement, 0);
-                obj.created  =    column_int  (statement, 1);
-                obj.modified =    column_int  (statement, 2);
-                #insert -> string {
-                    sb: String_Builder;
-                    column_number := 3;
-                    for serializable_members_of(type) {
-                        if it.type.type == {
-                            case .BOOL; append(*sb, sprint(#string XX
-                obj.%1 = cast(bool) column_int(statement, %2);
-XX, it.name, column_number));
-                            case .INTEGER; append(*sb, sprint(#string XX
-                obj.%1 = column_int%3(statement, %2);
-XX, it.name, column_number, ifx it.type.runtime_size == 8 then "64"));
-                            case .FLOAT; append(*sb, sprint(#string XX
-                obj.%1 = %3column_double(statement, %2);
-XX, it.name, column_number, ifx it.type.runtime_size == 4 then "xx "));
-                            case .STRING; append(*sb, sprint(#string XX
-                obj.%1 = column_text(statement, %2);
-XX, it.name, column_number));
-                            case; continue;
-                        }
-                        column_number += 1;
-                    }
-                    return builder_to_string(*sb);
-                }
+                fetch_row(*obj, statement);
                 continue;
             }
             if result != .DONE then return result, .{};
@@ -220,10 +190,13 @@ XX, it.name, column_number));
         if !got_result return result, .{};
 
         #insert #run sprint("cache := context.db_cache._%1;", type);
-        return result, .{table_set(*cache, obj.id, obj)};
+        return result, .{obj.id, table_set(*cache, obj.id, obj)};
     }
 
-    // select_from :: ($type: Type, where: string)
+    select_from :: ($type: Type, where: string) -> result: Result, rows: [..] Cached(type) {
+        rows: [..] Cached(type);
+        return .OK, rows;
+    }
 
     delete :: (cached_obj: $T/Cached) -> result: Result {
         SQL_STATEMENT :: #run sprint("DELETE FROM %1 WHERE id = ?;", T.type);
@@ -252,37 +225,97 @@ XX, it.name, column_number));
 
     // delete_from :: ($type: Type, where: string)
 
-}
-
-#scope_file
-
-is_a_model :: (type: Type) -> bool {
-    return (#import "Compiler").is_subclass_of(cast(*Type_Info) type, "Model");
-}
-
-get_sqlite_cast_string_for_model_member :: (info: Type_Info_Struct_Member) -> string {
-    if info.type.type == {
-        case .BOOL; return " cast(int)";
+    fetch :: (cached: *$T/Cached) -> result: Result {
+        result: Result;
+        fetched: T;
+        result, fetched = select_by_id(T.type, cached.fetch_id);
+        cached.pointer = fetched.pointer;
+        return result;
     }
-    return "";
-}
 
-serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member #expand {
-    NOTE_NOSERIALIZE :: "NoSerialize";
-
-    members: [..] Type_Info_Struct_Member;
-    for type_info(type).members {
-        if  it.type.type != .BOOL    &&
-            it.type.type != .INTEGER &&
-            it.type.type != .FLOAT   &&
-            it.type.type != .STRING
-        then continue;
-
-        has_noserialize_note := false;
-        for it.notes if it == NOTE_NOSERIALIZE { has_noserialize_note = true; break; }
-        if has_noserialize_note then continue;
-
-        array_add(*members, it);
+    fetch_row :: (obj: *$T/Model, statement: Statement) {
+        obj.id       = xx column_int64(statement, 0);
+        obj.created  =    column_int  (statement, 1);
+        obj.modified =    column_int  (statement, 2);
+        #insert -> string {
+            sb: String_Builder;
+            column_number := INTERNAL_COLUMN_COUNT;
+            for serializable_members_of(T) {
+                if member_is_foreign_key(it) then print_to_builder(*sb, #string XX
+                obj.%1.fetch_id = xx column_int64(statement, %2);
+XX, it.name, column_number);
+                else if it.type.type == {
+                    case .BOOL; print_to_builder(*sb, #string XX
+                obj.%1 = cast(bool) column_int(statement, %2);
+XX, it.name, column_number);
+                    case .INTEGER; print_to_builder(*sb, #string XX
+                obj.%1 = column_int%3(statement, %2);
+XX, it.name, column_number, ifx it.type.runtime_size == 8 then "64");
+                    case .FLOAT; print_to_builder(*sb, #string XX
+                obj.%1 = %3column_double(statement, %2);
+XX, it.name, column_number, ifx it.type.runtime_size == 4 then "xx ");
+                    case .STRING; print_to_builder(*sb, #string XX
+                obj.%1 = column_text(statement, %2);
+XX, it.name, column_number);
+                    case; continue;
+                }
+                column_number += 1;
+            }
+            return builder_to_string(*sb);
+        }
     }
-    return members;
+
+    is_a_model :: (type: Type) -> bool {
+        return (#import "Compiler").is_subclass_of(cast(*Type_Info) type, "Model");
+    }
+
+    is_a_model :: (info: *Type_Info_Struct) -> bool {
+        return (#import "Compiler").is_subclass_of(cast(*Type_Info) info, "Model");
+    }
+
+    get_sqlite_cast_string_for_model_member :: (info: Type_Info_Struct_Member) -> string {
+        if info.type.type == {
+            case .BOOL; return " cast(int)";
+        }
+        return "";
+    }
+
+    serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member {
+        return serializable_members_of(type_info(type));
+    }
+
+    serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Member {
+        NOTE_NOSERIALIZE :: "NoSerialize";
+
+        members: [..] Type_Info_Struct_Member;
+        for info.members {
+            if  !member_is_foreign_key(it) &&
+                it.type.type != .BOOL      &&
+                it.type.type != .INTEGER   &&
+                it.type.type != .FLOAT     &&
+                it.type.type != .STRING
+            then continue;
+
+            has_noserialize_note := false;
+            for it.notes if it == NOTE_NOSERIALIZE { has_noserialize_note = true; break; }
+            if has_noserialize_note then continue;
+
+            array_add(*members, it);
+        }
+        return members;
+    }
+
+    member_is_foreign_key :: (member: Type_Info_Struct_Member) -> bool {
+        if member.type.type == .STRUCT then return (cast(*Type_Info_Struct) member.type).name == "Cached";
+        return false;
+    }
+
+    id_or_fetch_id :: (using cached: $T/Cached) -> T.ID {
+        assert(fetch_id != 0);
+        if !is_fetched(cached) then return fetch_id; else return id;
+    }
+
+    is_fetched :: (using cached: $T/Cached) -> bool { return pointer != null; }
 }
+
+#import "Hash_Table";
