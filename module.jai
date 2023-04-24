@@ -1,6 +1,5 @@
 #module_parameters(
     FROM_METAPROGRAM := false,
-    NAMESPACE        := "",
     USE_ORM          := true,
     STRICT_TABLES    := false
 );

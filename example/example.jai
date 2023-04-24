@@ -29,4 +29,4 @@ ENTRY_POINT :: "src/Main.jai";
 
 #import "Basic";
 #import "Compiler";
-SQL :: #import,dir "../../SQLite"(FROM_METAPROGRAM=true, NAMESPACE="SQL");
+SQL :: #import,dir "../../SQLite"(FROM_METAPROGRAM=true);

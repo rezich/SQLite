@@ -10,9 +10,15 @@ insert(obj)
 update(obj)
     save cached object changes to the database
 select_by_id(T, id)
+select_from(T, where, params)
     lookup an object in the database, save it to the cache, return a Cached(T)
 delete(obj)
     delete a cached database object from the database
+
+is_fetched(obj)
+    returns whether or not the object exists in the local database cache
+flush_cache()
+    flush the local database cache
 
  */
 
@@ -38,14 +44,12 @@ ORM :: struct {
         database_already_existed := (#import "File_Utilities").file_exists(filename);
         #if DELETE_DATABASE_EVERY_RUN { (#import "File").file_delete(filename); database_already_existed = false; }
         { result, error := open(filename); AssertIfError(); }
-        if !database_already_existed {
-            { result, error := exec(`DATABASE_SCHEMA); AssertIfError(); }
-            for string.[
-                "journal_mode = WAL",
-                "synchronous = NORMAL",
-                "foreign_keys = ON",
-            ] { result, error := exec(tprint("PRAGMA %;", it)); AssertIfError(); }
-        }
+        if !database_already_existed { result, error := exec(`DATABASE_SCHEMA); AssertIfError(); }
+        for string.[
+            "journal_mode = WAL",
+            "synchronous = NORMAL",
+            "foreign_keys = ON",
+        ] { result, error := exec(tprint("PRAGMA %;", it)); AssertIfError(); }
         AssertIfError :: () #expand { assert(`result == .OK, "%: %", `result, `error); }
     }
 
@@ -103,8 +107,8 @@ XX,             question_mark_index, it.name, get_sqlite_cast_string_for_model_m
         result = finalize(statement);
         if result != .OK then return result, .{};
 
-        #insert #run sprint("cache := context.db_cache._%1;", T);
-        return result, .{obj.id, table_set(*cache, obj.id, obj)};
+        #insert #run sprint("pointer := table_set(*context.db_cache._%1, obj.id, obj);", T);
+        return result, .{obj.id, pointer};
     }
 
     update :: (cached_obj: $T/Cached) -> result: Result {
@@ -116,7 +120,7 @@ XX,             question_mark_index, it.name, get_sqlite_cast_string_for_model_m
             }
             return sprint("UPDATE %1 SET %2, modified = CURRENT_TIMESTAMP WHERE id = ?;", T.type, builder_to_string(*sb_fields));
         }
-        INDEX_OF_ID_QUESTION_MARK :: #run serializable_members_of(T.type).count;
+        INDEX_OF_ID_QUESTION_MARK :: #run serializable_members_of(T.type).count+1;
         statement: Statement;
         result: Result;
 
@@ -189,12 +193,67 @@ XX,             question_mark_index, it.name, get_sqlite_cast_string_for_model_m
         
         if !got_result return result, .{};
 
-        #insert #run sprint("cache := context.db_cache._%1;", type);
-        return result, .{obj.id, table_set(*cache, obj.id, obj)};
+        #insert #run sprint("pointer := table_set(*context.db_cache._%1, obj.id, obj);", type);
+        return result, .{obj.id, pointer};
     }
 
-    select_from :: ($type: Type, where: string) -> result: Result, rows: [..] Cached(type) {
+    select_from :: ($type: Type, $where: string, params: ..Any) -> result: Result, rows: [..] Cached(type) {
+        SQL_STATEMENT :: #run -> string {
+            sb: String_Builder;
+            for serializable_members_of(type) {
+                if it_index != 0 then append(*sb, ", ");
+                append(*sb, it.name);
+                if member_is_foreign_key(it) then append(*sb, "_id");
+            }
+            return sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2 WHERE %3;", builder_to_string(*sb), type, where);
+        }
+        statement: Statement;
+        result: Result;
+
         rows: [..] Cached(type);
+
+        result, statement = prepare_v2(SQL_STATEMENT);
+        if result != .OK then return result, rows;
+
+        param_number: s32 = 1;
+        for params {
+            if it.type.type == {
+                case .VARIANT; #through; //HACK
+                case .BOOL; #through;
+                case .INTEGER;
+                    if it.type.runtime_size <= 4
+                        result = bind(statement, param_number, <<cast(*s32) it.value_pointer);
+                    else
+                        result = bind(statement, param_number, <<cast(*s64) it.value_pointer);
+                case .FLOAT;
+                    result = bind(statement, param_number, <<cast(*float64) it.value_pointer);
+                case .STRING;
+                    result = bind(statement, param_number, <<cast(*string)  it.value_pointer);
+            }
+            if result != .OK then return result, rows;
+            param_number += 1;
+        }
+
+        result = Result.BUSY;
+        got_result := false;
+        while result == .BUSY || result == .ROW {
+            result = step(statement);
+            if result == .ROW {
+                got_result = true;
+                obj: type;
+                fetch_row(*obj, statement);
+                #insert #run sprint("pointer := table_set(*context.db_cache._%1, obj.id, obj);", type);
+                array_add(*rows, .{obj.id, pointer});
+                continue;
+            }
+            if result != .DONE then return result, rows;
+        }
+
+        result = finalize(statement);
+        if result != .OK then return result, rows;
+        
+        if !got_result return result, rows;
+        
         return .OK, rows;
     }
 
@@ -217,8 +276,7 @@ XX,             question_mark_index, it.name, get_sqlite_cast_string_for_model_m
 
         result = finalize(statement);
 
-        #insert #run sprint("cache := context.db_cache._%1;", T.type);
-        table_remove(*cache, cached_obj.id);
+        #insert #run sprint("table_remove(*context.db_cache._%1, cached_obj.id);", T.type);
 
         return result;
     }
@@ -242,8 +300,10 @@ XX,             question_mark_index, it.name, get_sqlite_cast_string_for_model_m
             column_number := INTERNAL_COLUMN_COUNT;
             for serializable_members_of(T) {
                 if member_is_foreign_key(it) then print_to_builder(*sb, #string XX
-                obj.%1.fetch_id = xx column_int64(statement, %2);
-XX, it.name, column_number);
+                id := column_int64(statement, %2);
+                found := table_find_pointer(*context.db_cache._%3, id);
+                if found then obj.%1 = .{xx id, found}; else obj.%1 = .{xx id, null};
+XX, it.name, column_number, get_foreign_key_name_from(it));
                 else if it.type.type == {
                     case .BOOL; print_to_builder(*sb, #string XX
                 obj.%1 = cast(bool) column_int(statement, %2);
@@ -309,6 +369,10 @@ XX, it.name, column_number);
         if member.type.type == .STRUCT then return (cast(*Type_Info_Struct) member.type).name == "Cached";
         return false;
     }
+    get_foreign_key_name_from :: (member: Type_Info_Struct_Member) -> string {
+        member_ti := (cast(*Type_Info_Struct) member.type);
+        return (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_ti.constant_storage[member_ti.specified_parameters[0].offset_into_constant_storage]).name;
+    }
 
     id_or_fetch_id :: (using cached: $T/Cached) -> T.ID {
         assert(fetch_id != 0);
@@ -316,6 +380,8 @@ XX, it.name, column_number);
     }
 
     is_fetched :: (using cached: $T/Cached) -> bool { return pointer != null; }
+
+    flush_cache :: () #expand { `__flush_database_cache(); }
 }
 
 #import "Hash_Table";

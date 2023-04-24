@@ -25,9 +25,8 @@ build_step :: inline (message: *Message) {
                         append(*sb_table, ",\n");
                         if ORM.member_is_foreign_key(it) {
                             print_to_builder(*sb_table, "    %_id  INTEGER", it.name);
-                            member_ti := (cast(*Type_Info_Struct) it.type);
-                            foreign_key_name := (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_ti.constant_storage[member_ti.specified_parameters[0].offset_into_constant_storage]).name;
-                            print_to_builder(*sb_fk, ",\n    FOREIGN KEY(%_id) REFERENCES %(id)", it.name, foreign_key_name);
+                            foreign_key_name := ORM.get_foreign_key_name_from(it);
+                            print_to_builder(*sb_fk, ",\n    FOREIGN KEY(%_id) REFERENCES %(id) ON DELETE CASCADE", it.name, foreign_key_name);
                         }
                         else if it.type.type == {
                             case .BOOL; #through;
@@ -51,6 +50,12 @@ build_step :: inline (message: *Message) {
 Database_Cache :: struct {
 XX, iterate(#string XX
     _%1: Table(s64, %1);
+XX), #string XX
+}
+__flush_database_cache :: () {
+    using context.db_cache;
+XX, iterate(#string XX
+    table_reset(*_%1);
 XX), #string XX
 }
 XX                  );
