@@ -13,26 +13,37 @@ Post :: struct { using #as model: ORM.Model;
 }
 
 main :: () {
+    set_working_directory((#import "String").path_strip_filename((#import "System").get_path_of_running_executable()));
     ORM.init("database.db");
     result: SQL.Result;
     {
         user1, user2: ORM.Cached(User);
 
         log("inserting a User");
-        result, user1 = ORM.insert(User.{name="Alice", age=32, favorite_floating_point_number=3.14, corporate_id=3_000_000_000});
-        AssertNoErrors();
+        result, user1 = ORM.insert(User.{
+            name="Alice",
+            age=32,
+            favorite_floating_point_number=3.14,
+            corporate_id=3_000_000_000
+        }); AssertNoErrors();
 
         log("inserting another User");
-        result, user2 = ORM.insert(User.{name="Bob", age=64, favorite_floating_point_number=1.111, corporate_id=3_000_000_001, is_awesome=true});
-        AssertNoErrors();
+        result, user2 = ORM.insert(User.{
+            name="Bob",
+            age=64,
+            favorite_floating_point_number=1.111,
+            corporate_id=3_000_000_001,
+            is_awesome=true
+        }); AssertNoErrors();
 
         log("inserting three Posts, ignoring the second return value");
         result = ORM.insert(Post.{body="First post",  author=user2}); AssertNoErrors();
         result = ORM.insert(Post.{body="Second post", author=user2}); AssertNoErrors();
-        result = ORM.insert(Post.{body="Third post", author=user2}); AssertNoErrors();
+        result = ORM.insert(Post.{body="Third post",  author=user2}); AssertNoErrors();
 
         log("deleting the first User");
-        result = ORM.delete(user1); AssertNoErrors();
+        result = ORM.delete(*user1); AssertNoErrors();
+        assert(!ORM.is_fetched(user1));
 
         list_posts_for(user2);
         list_posts_for(user2, limit=2);
@@ -41,16 +52,22 @@ main :: () {
         list_posts_for :: (author: ORM.Cached(User), $limit: int=0, $offset: int=0) {
             if ORM.is_fetched(author) {
                 log("getting %1post%2 for %3%4",
-                /* 1 */ ifx limit then tprint("up to % ", limit),
-                /* 2 */ ifx limit != 1 then "s",
-                /* 3 */ author.name,
-                /* 4 */ ifx offset then tprint(" starting after #%", offset)
+                /* 1 */ifx limit then tprint("up to % ", limit),
+                /* 2 */ifx limit != 1 then "s",
+                /* 3 */author.name,
+                /* 4 */ifx offset then tprint(" starting after #%", offset)
                 );
                 result, posts := ORM.select_from(Post, where="author_id = ?", author.id, limit=limit, offset=offset);
                 AssertNoErrors();
                 for posts log("  % %", it.id, it.body);
             }
         }
+
+        // one more time, just because this is cool:
+        ORM.select_from(Post, where="author_id = ?", user2.id);
+        ORM.select_from(Post, where="author_id = ?", user2.id, limit=2);
+        ORM.select_from(Post, where="author_id = ?", user2.id, limit=2, offset=2);
+        ORM.select_from(Post, where="author_id = ?", user2.id,          offset=2);
 
         new_name := "Robert";
         log("changing %'s name to %", user2.name, new_name);
@@ -81,8 +98,6 @@ main :: () {
 AssertNoErrors :: () #expand { assert(`result == .OK, "%: %", `result, SQL.errmsg()); }
 
 #import "Basic";
-#import "Hash_Table";
-#import "File";
 
 SQL :: #import,dir "../../../SQLite";
 ORM :: SQL.ORM;

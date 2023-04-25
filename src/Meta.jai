@@ -26,13 +26,20 @@ build_step :: inline (message: *Message) {
                         if ORM.member_is_foreign_key(it) {
                             print_to_builder(*sb_table, "    %_id  INTEGER", it.name);
                             foreign_key_name := ORM.get_foreign_key_name_from(it);
-                            print_to_builder(*sb_fk, ",\n    FOREIGN KEY(%_id) REFERENCES %(id) ON DELETE CASCADE", it.name, foreign_key_name);
+                            print_to_builder(*sb_fk, ",\n    FOREIGN KEY(%1_id) REFERENCES %2(id) ON DELETE %3",
+                            /* 1 */it.name,
+                            /* 2 */foreign_key_name,
+                            /* 3 */ifx ON_DELETE == .NO_ACTION   then "NO ACTION"   else
+                                   ifx ON_DELETE == .SET_NULL    then "SET NULL"    else
+                                   ifx ON_DELETE == .SET_DEFAULT then "SET DEFAULT" else
+                                   sprint("%", ON_DELETE)
+                            );
                         }
                         else if it.type.type == {
                             case .BOOL; #through;
                             case .INTEGER; print_to_builder(*sb_table, "    %  INTEGER", it.name);
-                            case .FLOAT; print_to_builder(*sb_table, "    % REAL", it.name);
-                            case .STRING; print_to_builder(*sb_table, "    %  TEXT", it.name);
+                            case .FLOAT;   print_to_builder(*sb_table, "    %  REAL",    it.name);
+                            case .STRING;  print_to_builder(*sb_table, "    %  TEXT",    it.name);
                         }
                     }
                     append(*sb_table, builder_to_string(*sb_fk));
@@ -48,6 +55,7 @@ build_step :: inline (message: *Message) {
                     quick_sort(model_names, compare_strings);
                     add_to_build(message.workspace, #string XX
 Database_Cache :: struct {
+    #import "Hash_Table";
 XX, iterate(#string XX
     _%1: Table(s64, %1);
 XX), #string XX
@@ -55,7 +63,7 @@ XX), #string XX
 __flush_database_cache :: () {
     using context.db_cache;
 XX, iterate(#string XX
-    table_reset(*_%1);
+    deinit(*_%1); init(*_%1); // this is probably dumb
 XX), #string XX
 }
 XX                  );

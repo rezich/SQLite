@@ -41,7 +41,7 @@ Result :: enum {
     DONE       :: 101;  /* sqlite3_step() has finished executing */
 }
 
-open :: (filename: string) -> result: Result, error: string {
+open :: (filename := ":memory:") -> result: Result, error: string {
     result := cast(Result) sqlite3_open(xx temp_c_string(filename), *context.db);
     error := ifx result != .OK then to_string(cast(*u8) sqlite3_errmsg(context.db));
     return result, error;
