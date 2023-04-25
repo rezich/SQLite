@@ -26,14 +26,31 @@ main :: () {
         result, user2 = ORM.insert(User.{name="Bob", age=64, favorite_floating_point_number=1.111, corporate_id=3_000_000_001, is_awesome=true});
         AssertNoErrors();
 
-        log("inserting two Posts");
+        log("inserting three Posts, ignoring the second return value");
         result = ORM.insert(Post.{body="First post",  author=user2}); AssertNoErrors();
         result = ORM.insert(Post.{body="Second post", author=user2}); AssertNoErrors();
+        result = ORM.insert(Post.{body="Third post", author=user2}); AssertNoErrors();
 
         log("deleting the first User");
         result = ORM.delete(user1); AssertNoErrors();
 
         list_posts_for(user2);
+        list_posts_for(user2, limit=2);
+        list_posts_for(user2, limit=2, offset=2);
+
+        list_posts_for :: (author: ORM.Cached(User), $limit: int=0, $offset: int=0) {
+            if ORM.is_fetched(author) {
+                log("getting %1post%2 for %3%4",
+                /* 1 */ ifx limit then tprint("up to % ", limit),
+                /* 2 */ ifx limit != 1 then "s",
+                /* 3 */ author.name,
+                /* 4 */ ifx offset then tprint(" starting after #%", offset)
+                );
+                result, posts := ORM.select_from(Post, where="author_id = ?", author.id, limit=limit, offset=offset);
+                AssertNoErrors();
+                for posts log("  % %", it.id, it.body);
+            }
+        }
 
         new_name := "Robert";
         log("changing %'s name to %", user2.name, new_name);
@@ -45,10 +62,10 @@ main :: () {
         result, post = ORM.select_by_id(Post, 1); AssertNoErrors();
         assert(ORM.is_fetched(post.author));
         log("  we can tell the Post's author's name is % because it's still in the cache.", post.author.name);
-    }{
-        log("flushing the cache");
-        ORM.flush_cache();
-    }{
+    }
+    log("flushing the cache");
+    ORM.flush_cache();
+    {
         post: ORM.Cached(Post);
         log("selecting the first Post");
         result, post = ORM.select_by_id(Post, 1); AssertNoErrors();
@@ -59,14 +76,6 @@ main :: () {
         log("  now we know the Post's author's name: it's %", post.author.name);
     }
     ORM.fini();
-}
-
-list_posts_for :: (author: ORM.Cached(User)) {
-    if ORM.is_fetched(author) {
-        log("getting posts for %", author.name);
-        result, posts := ORM.select_from(Post, where="author_id = ?", author.id); AssertNoErrors();
-        for posts log("  % %", it.id, it.body);
-    }
 }
 
 AssertNoErrors :: () #expand { assert(`result == .OK, "%: %", `result, SQL.errmsg()); }
