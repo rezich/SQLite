@@ -30,7 +30,7 @@ XX                  );
                             print_to_builder(*sb_table, #string XX
 ,%1_id INTEGER
 XX,                         /* 1 */ it.name);
-                            fk_name := ORM.get_foreign_key_name_from(it);
+                            fk_name := ORM.get_foreign_key_name_from(it, name);
                             on_update, on_delete: string;
                             for it.notes {
                                 found, key, value := split_from_left(it, #char "=");

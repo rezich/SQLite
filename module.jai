@@ -1,4 +1,5 @@
 #module_parameters(
+    VERBOSE          := false,
     FROM_METAPROGRAM := false,
     USE_ORM          := true,
     STRICT_TABLES    := false,

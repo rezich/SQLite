@@ -58,6 +58,11 @@ ORM :: struct {
         using pointer: *type;
     }
 
+    CachedThis :: struct {
+        fetch_id: s64;
+        pointer: *void;
+    }
+
     init :: (filename := ":memory:") #expand {
         #if DELETE_DATABASE_EVERY_RUN if filename != ":memory:" then (#import "File").file_delete(filename);
         database_already_existed := filename != ":memory:" && (#import "File_Utilities").file_exists(filename);
@@ -103,12 +108,9 @@ ORM :: struct {
             sb: String_Builder;
             question_mark_index := 1;
             for serializable_members_of(T) {
-                if member_is_foreign_key(it) then print_to_builder(*sb, #string XX
-        result = bind(statement, %1, id_or_fetch_id(_obj.%2));
-XX,             /* 1 */question_mark_index,
-                /* 2 */it.name
-                );
-                else print_to_builder(*sb, #string XX
+                print_to_builder(*sb, ifx member_is_foreign_key(it) then #string XX
+        result = ifx _obj.%2.fetch_id == 0 then bind(statement, %1) else bind(statement, %1, _obj.%2.fetch_id);
+XX              else #string XX
         result = bind(statement, %1, %3_obj.%2);
 XX,             /* 1 */question_mark_index,
                 /* 2 */it.name,
@@ -164,13 +166,17 @@ XX,     /* 1 */T
             sb: String_Builder;
             for serializable_members_of(T.type) {
                 question_mark_index := it_index + 1;
-                print_to_builder(*sb, #string XX
+                print_to_builder(*sb, ifx member_is_foreign_key(it) then #string XX
+        result = ifx %2cached_obj.fetch_id == 0 then bind(statment, %1) else bind(statement, %1, %2cached_obj.%3);
+XX              else #string XX
         result = bind(statement, %1, %2cached_obj.%3);
-        if result != .OK then return result;
-    XX,         /* 1 */question_mark_index,
+XX,             /* 1 */question_mark_index,
                 /* 2 */get_sqlite_cast_string_for_model_member(it),
                 /* 3 */it.name
                 );
+                append(*sb, #string XX
+        if result != .OK then return result;
+XX,             );
             }
             return builder_to_string(*sb);
         }
@@ -314,8 +320,17 @@ XX,     /* 1 */ T.type);
     // delete_from :: ($type: Type, where: string)
 
     fetch :: (cached: *$T/Cached) -> result: Result {
+        assert(cached.fetch_id != 0);
         result, fetched := select_by_id(T.type, cached.fetch_id);
         cached.pointer = fetched.pointer;
+        return result;
+    }
+
+    fetch :: ($type: Type, cached_this: *CachedThis) -> result: Result {
+        assert(cached_this.fetch_id != 0);
+        cached: Cached(type);
+        result, fetched := select_by_id(type, xx cached_this.fetch_id);
+        cached_this.pointer = fetched.pointer;
         return result;
     }
 
@@ -328,12 +343,14 @@ XX,     /* 1 */ T.type);
             column_number := INTERNAL_COLUMN_COUNT;
             for serializable_members_of(T) {
                 if member_is_foreign_key(it) then print_to_builder(*sb, #string XX
-        id := column_int64(statement, %2);
-        found := table_find_pointer(*context.db_cache._%3, id);
-        if found then obj.%1 = .{xx id, found}; else obj.%1 = .{xx id, null};
+        {
+            id := column_int64(statement, %2);
+            found := table_find_pointer(*context.db_cache._%3, id);
+            if found then obj.%1 = .{xx id, found}; else obj.%1 = .{xx id, null};
+        }
 XX,             /* 1 */it.name,
                 /* 2 */column_number,
-                /* 3 */get_foreign_key_name_from(it)
+                /* 3 */get_foreign_key_name_from(it, sprint("%", T))
                 );
                 else if it.type.type == {
                     case .BOOL; print_to_builder(*sb, #string XX
@@ -402,18 +419,23 @@ XX,                 /* 1 */it.name,
     }
 
     member_is_foreign_key :: (member: Type_Info_Struct_Member) -> bool {
-        if member.type.type == .STRUCT then return (cast(*Type_Info_Struct) member.type).name == "Cached";
+        if member.type.type == .STRUCT {
+            struct_name := (cast(*Type_Info_Struct) member.type).name;
+            return struct_name == "Cached" || struct_name == "CachedThis";
+        }
         return false;
     }
-    get_foreign_key_name_from :: (member: Type_Info_Struct_Member) -> string {
+
+    get_foreign_key_name_from :: (member: Type_Info_Struct_Member, model_name: string) -> string {
         member_info := (cast(*Type_Info_Struct) member.type);
+        if member_info.name == "CachedThis" then return model_name;
         return (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_info.constant_storage[member_info.specified_parameters[0].offset_into_constant_storage]).name; // thanks, shwa!
     }
 
-    id_or_fetch_id :: (using cached: $T/Cached) -> T.ID {
+    /*id_or_fetch_id :: (using cached: $T/Cached) -> T.ID {
         assert(fetch_id != 0);
         if !is_fetched(cached) then return fetch_id; else return id;
-    }
+    }*/
 
     is_fetched :: (using cached: $T/Cached) -> bool { return pointer != null; }
 

@@ -9,7 +9,8 @@ User :: struct { using #as model: ORM.Model;
 
 Post :: struct { using #as model: ORM.Model;
     body: string;
-    author: ORM.Cached(User); @on_delete=SET_NULL
+    author: ORM.Cached(User); @on_delete=CASCADE
+    parent: ORM.CachedThis;   @on_delete=CASCADE
 }
 
 main :: () {
@@ -37,9 +38,40 @@ main :: () {
         }); AssertNoErrors();
 
         log("inserting three Posts, ignoring the second return value");
-        result = ORM.insert(Post.{body="First post",  author=user2}); AssertNoErrors();
-        result = ORM.insert(Post.{body="Second post", author=user2}); AssertNoErrors();
-        result = ORM.insert(Post.{body="Third post",  author=user2}); AssertNoErrors();
+        result = ORM.insert(Post.{
+            body="First post",
+            author=user2
+        }); AssertNoErrors();
+        result = ORM.insert(Post.{
+            body="Second post",
+            author=user2
+        }); AssertNoErrors();
+        result = ORM.insert(Post.{
+            body="Third post",
+            author=user2
+        }); AssertNoErrors();
+
+        log("inserting a Post");
+        parent_post, child_post: ORM.Cached(Post);
+        result, parent_post = ORM.insert(Post.{
+            body="Parent Post",
+            author=user1
+        }); AssertNoErrors();
+
+        log("inserting another Post, with the previous Post as its parent");
+        result, child_post = ORM.insert(Post.{
+            body="Child Post",
+            author=user1,
+            parent=xx parent_post
+        }); AssertNoErrors();
+        // the xx above is ugly but it's the best solution for now with regards to self-referential foreign keys
+
+        {
+            post: ORM.Cached(Post);
+            result, post = ORM.select_by_id(Post, 5); AssertNoErrors();
+            ORM.fetch(Post, *post.parent); AssertNoErrors();
+            // another weird hack for CachedThis. but it works!
+        }
 
         log("deleting the first User");
         result = ORM.delete(*user1); AssertNoErrors();
