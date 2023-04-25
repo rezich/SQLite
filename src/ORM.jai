@@ -7,8 +7,9 @@ Cached(T)
     when used as a model struct member, it represents a foreign key to another
     table.
     you can use @on_update=x and @on_delete=x, where x is any value of
-    Foreign_Key_Action (see below) (WITHOUT the .) to append "ON UPDATE" &
-    "ON DELETE" clauses to the foreign key relationship. for example:
+    Foreign_Key_Action (WITHOUT the .) to append "ON UPDATE" & "ON DELETE"
+    clauses to the foreign key relationship.
+    for example:
         author: Cached(User); @on_update=SET_NULL @on_delete=SET_DEFAULT
 
 
@@ -44,8 +45,6 @@ ORM :: struct {
     DELETE_DATABASE_EVERY_RUN :: true; // for testing
     INTERNAL_COLUMN_COUNT :: 3; // id, created, modified
 
-    Foreign_Key_Action :: enum { NO_ACTION; RESTRICT; SET_NULL; SET_DEFAULT; CASCADE; }
-
     Model :: struct {
         id: ID;
         created: s32;  // UNIX timestamp for now
@@ -64,7 +63,7 @@ ORM :: struct {
         database_already_existed := filename != ":memory:" && (#import "File_Utilities").file_exists(filename);
 
         { result, error := open(filename); AssertIfError(); }
-        if !database_already_existed { result, error := exec(`DATABASE_SCHEMA); AssertIfError(); }
+        if !database_already_existed then for `TABLE_SCHEMAS { result, error := exec(it); AssertIfError(); }
 
         for string.[
             "journal_mode = WAL",

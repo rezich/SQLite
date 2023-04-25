@@ -10,3 +10,4 @@
 .vs
 *.rdbg
 example/bin
+example/migrations
