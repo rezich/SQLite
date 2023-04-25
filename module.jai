@@ -1,8 +1,7 @@
 #module_parameters(
     FROM_METAPROGRAM := false,
     USE_ORM          := true,
-    STRICT_TABLES    := false,
-    ON_DELETE : enum { NO_ACTION; RESTRICT; SET_NULL; SET_DEFAULT; CASCADE; } = .NO_ACTION // this'll be per foreign key soon
+    STRICT_TABLES    := false
 );
 
 #if FROM_METAPROGRAM            then #load "src/Meta.jai";

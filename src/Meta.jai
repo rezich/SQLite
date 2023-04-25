@@ -25,14 +25,22 @@ build_step :: inline (message: *Message) {
                         append(*sb_table, ",\n");
                         if ORM.member_is_foreign_key(it) {
                             print_to_builder(*sb_table, "    %_id  INTEGER", it.name);
-                            foreign_key_name := ORM.get_foreign_key_name_from(it);
-                            print_to_builder(*sb_fk, ",\n    FOREIGN KEY(%1_id) REFERENCES %2(id) ON DELETE %3",
+                            fk_name := ORM.get_foreign_key_name_from(it);
+                            on_update, on_delete: string;
+                            for it.notes {
+                                found, key, value := split_from_left(it, #char "=");
+                                if !found continue;
+                                if key == "on_update" && is_valid_fk_action(value) then on_update = replace(value, "_", " ");
+                                if key == "on_delete" && is_valid_fk_action(value) then on_delete = replace(value, "_", " ");
+                                is_valid_fk_action :: (value: string) -> bool { for enum_names(ORM.Foreign_Key_Action) if it == value then return true; assert(false, "Invalid Foreign_Key_Action in Cached(T) note."); return false; }
+                            }
+
+
+                            print_to_builder(*sb_fk, ",\n    FOREIGN KEY(%1_id) REFERENCES %2(id)%3%4",
                             /* 1 */it.name,
-                            /* 2 */foreign_key_name,
-                            /* 3 */ifx ON_DELETE == .NO_ACTION   then "NO ACTION"   else
-                                   ifx ON_DELETE == .SET_NULL    then "SET NULL"    else
-                                   ifx ON_DELETE == .SET_DEFAULT then "SET DEFAULT" else
-                                   sprint("%", ON_DELETE)
+                            /* 2 */fk_name,
+                            /* 3 */ifx on_update != "" then sprint(" ON UPDATE %", on_update),
+                            /* 4 */ifx on_delete != "" then sprint(" ON DELETE %", on_delete)
                             );
                         }
                         else if it.type.type == {

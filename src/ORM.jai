@@ -1,9 +1,16 @@
 /*
 
 Model
-    base struct for all your database model structs
+    base struct for all database model structs
 Cached(T) 
     pointer to database row object in the database cache
+    when used as a model struct member, it represents a foreign key to another
+    table.
+    you can use @on_update=x and @on_delete=x, where x is any value of
+    Foreign_Key_Action (see below) (WITHOUT the .) to append "ON UPDATE" &
+    "ON DELETE" clauses to the foreign key relationship. for example:
+        author: Cached(User); @on_update=SET_NULL @on_delete=SET_DEFAULT
+
 
 init(filename)
     open the database
@@ -36,6 +43,8 @@ flush_cache()
 ORM :: struct {
     DELETE_DATABASE_EVERY_RUN :: true; // for testing
     INTERNAL_COLUMN_COUNT :: 3; // id, created, modified
+
+    Foreign_Key_Action :: enum { NO_ACTION; RESTRICT; SET_NULL; SET_DEFAULT; CASCADE; }
 
     Model :: struct {
         id: ID;

@@ -9,7 +9,7 @@ User :: struct { using #as model: ORM.Model;
 
 Post :: struct { using #as model: ORM.Model;
     body: string;
-    author: ORM.Cached(User);
+    author: ORM.Cached(User); @on_delete=SET_NULL
 }
 
 main :: () {
@@ -68,6 +68,7 @@ main :: () {
         ORM.select_from(Post, where="author_id = ?", user2.id, limit=2);
         ORM.select_from(Post, where="author_id = ?", user2.id, limit=2, offset=2);
         ORM.select_from(Post, where="author_id = ?", user2.id,          offset=2);
+        ORM.select_from(Post,                                  limit=2);
 
         new_name := "Robert";
         log("changing %'s name to %", user2.name, new_name);
