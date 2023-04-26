@@ -25,7 +25,7 @@ My_Struct :: struct { using model: Model;
     real: float;
     big_real: float64;
     other: Cached(My_Other_Struct);
-    private: int; @NoSerialize
+    private: int; @no_serialize
 }
 ```
 
@@ -56,15 +56,18 @@ retrieved from the database. you can flush this cache at any time using `flush_c
 TODO
 ====
 
- - compile-time check the number of query-fragment question marks vs. the number of passed-in parameters
+ - more compile-time checking of things to make usage more pleasant, e.g. help the user if they forget to `#as` the `using model: Model;` in their models
+ - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`...?
+ - check the number of query-fragment question marks vs. the number of passed-in parameters at compile time
  - delete most of the code in `select_by_id(T, id)`
  - `update(cached_obj, field_name, value)`
  - `update(T, field_name, value, where, params)`
  - `update(T, field_names, values, where, params)` (...)
  - `delete_from(T, where, params)`
  - `insert(objs)`
- - ...
- - some way of doing `operator ==` with `Cached(T)`s
+ - (...)
+ - some way of doing `operator ==` with `Cached(T)`s (and `CachedThis`s)
+ - see if there is any possibility of getting rid of `CachedThis`
  - maybe just huck the SQLite error message into the `context`?
  - maybe have the wrapper functions return enums that are subsets of `Result`? (`#must`...?)
  - more generally, figure out if there's a more ergonomic way to handle SQLite result and/or error passing

@@ -400,7 +400,7 @@ XX,                 /* 1 */it.name,
     }
 
     serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Member {
-        NOTE_NOSERIALIZE :: "NoSerialize";
+        NOTE_DO_NOT_SERIALIZE :: "do_not_serialize";
 
         members: [..] Type_Info_Struct_Member;
         for info.members {
@@ -410,9 +410,9 @@ XX,                 /* 1 */it.name,
                 it.type.type != .FLOAT     &&
                 it.type.type != .STRING
             then continue;
-            has_noserialize_note := false;
-            for it.notes if it == NOTE_NOSERIALIZE { has_noserialize_note = true; break; }
-            if has_noserialize_note then continue;
+            has_do_not_serialize_note := false;
+            for it.notes if it == NOTE_DO_NOT_SERIALIZE { has_do_not_serialize_note = true; break; }
+            if has_do_not_serialize_note then continue;
             array_add(*members, it);
         }
         return members;
@@ -432,12 +432,11 @@ XX,                 /* 1 */it.name,
         return (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_info.constant_storage[member_info.specified_parameters[0].offset_into_constant_storage]).name; // thanks, shwa!
     }
 
-    /*id_or_fetch_id :: (using cached: $T/Cached) -> T.ID {
-        assert(fetch_id != 0);
-        if !is_fetched(cached) then return fetch_id; else return id;
-    }*/
+    is_fetched :: (using cached: $T/Cached)  -> bool { return pointer != null; }
+    is_fetched :: (using cached: CachedThis) -> bool { return pointer != null; }
 
-    is_fetched :: (using cached: $T/Cached) -> bool { return pointer != null; }
+    is_null :: (using cached: $T/Cached)  -> bool { return fetch_id == 0; }
+    is_null :: (using cached: CachedThis) -> bool { return fetch_id == 0; }
 
     flush_cache :: () #expand { `__flush_database_cache(); } // :P
 

@@ -4,7 +4,7 @@ User :: struct { using #as model: ORM.Model;
     favorite_floating_point_number: float;
     corporate_id: s64;
     is_awesome := false;
-    something_else: string; @NoSerialize
+    something_else: string; @do_not_serialize
 }
 
 Post :: struct { using #as model: ORM.Model;

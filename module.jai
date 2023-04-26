@@ -3,7 +3,7 @@
     FROM_METAPROGRAM := false,
     USE_ORM          := true,
     STRICT_TABLES    := false,
-    MAKE_MIGRATIONS  := false
+    MAKE_MIGRATIONS  := false  // work in progress
 );
 
 #if FROM_METAPROGRAM                    then #load "src/Meta.jai";
