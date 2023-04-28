@@ -10,7 +10,7 @@ User :: struct { using #as model: ORM.Model;
 Post :: struct { using #as model: ORM.Model;
     body: string;
     author: ORM.Cached(User); @on_delete=CASCADE
-    parent: ORM.CachedThis;   @on_delete=CASCADE
+    parent: ORM.Cached(Post); @on_delete=CASCADE
 }
 
 main :: () {
@@ -57,25 +57,34 @@ main :: () {
             body="Parent Post",
             author=user1
         }); AssertNoErrors();
+        log("  post id % will be the parent", parent_post.id);
 
         log("inserting another Post, with the previous Post as its parent");
         result, child_post = ORM.insert(Post.{
             body="Child Post",
             author=user1,
-            parent=xx parent_post
+            parent=parent_post
         }); AssertNoErrors();
-        // the xx above is ugly but it's the best solution for now with regards to self-referential foreign keys
+        log("  Post id % will be the child", child_post.id);
 
+        child_post_id := child_post.id;
         {
             post: ORM.Cached(Post);
-            result, post = ORM.select_by_id(Post, 5); AssertNoErrors();
-            ORM.fetch(Post, *post.parent); AssertNoErrors();
-            // another weird hack for CachedThis. but it works!
+            log("selecting Post id %, the child", child_post_id);
+            result, post = ORM.select_by_id(Post, child_post_id); AssertNoErrors();
+
+            ORM.fetch(*post.parent);
+            assert(!ORM.is_null(post.parent));
+            if !ORM.is_null(post.parent) log("fetched the parent of the child; it's:\n  id: %1, body: %2",
+            /* 1 */post.parent.id,
+            /* 2 */post.parent.body
+            );
         }
 
         log("deleting the first User");
         result = ORM.delete(*user1); AssertNoErrors();
         assert(!ORM.is_fetched(user1));
+        assert(ORM.is_null(user1));
 
         list_posts_for(user2);
         list_posts_for(user2, limit=2);
@@ -132,7 +141,7 @@ AssertNoErrors :: () #expand { assert(`result == .OK, "%: %", `result, SQL.errms
 
 #import "Basic";
 
-SQL :: #import,dir "../../../SQLite";
+SQL :: #import,dir "../../../SQLite"(VERBOSE=true);
 ORM :: SQL.ORM;
 
 #add_context db_cache: Database_Cache;

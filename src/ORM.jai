@@ -46,21 +46,14 @@ ORM :: struct {
     INTERNAL_COLUMN_COUNT :: 3; // id, created, modified
 
     Model :: struct {
-        id: ID;
+        id: s64;
         created: s32;  // UNIX timestamp for now
         modified: s32; // UNIX timestamp for now
-
-        ID :: #type,isa s64;
     }
 
-    Cached :: struct(type: Type) #modify { return is_a_model(type); } {
-        fetch_id: type.ID;
-        using pointer: *type;
-    }
-
-    CachedThis :: struct {
+    Cached :: struct(type: Type) /*#modify { return is_a_model(type); }*/ {
         fetch_id: s64;
-        pointer: *void;
+        using pointer: *type;
     }
 
     init :: (filename := ":memory:") #expand {
@@ -128,9 +121,9 @@ XX              );
         while result == .BUSY {
             result = step(statement);
             if result == .ROW {
-                obj.id       = xx column_int64(statement, 0);
-                obj.created  =    column_int  (statement, 1);
-                obj.modified =    obj.created;
+                obj.id       = column_int64(statement, 0);
+                obj.created  = column_int  (statement, 1);
+                obj.modified = obj.created;
                 continue;
             }
             if result != .DONE then return result, .{};
@@ -196,7 +189,7 @@ XX,             );
 
     // update :: ($type: Type, set: string, where: string)
 
-    select_by_id :: ($type: Type, id: type.ID) -> result: Result, obj: Cached(type) #modify { return is_a_model(type); } {
+    select_by_id :: ($type: Type, id: s64) -> result: Result, obj: Cached(type) #modify { return is_a_model(type); } {
         SQL_STATEMENT :: #run -> string {
             sb: String_Builder;
             for serializable_members_of(type) {
@@ -258,7 +251,6 @@ XX,     /* 1 */type);
         param_number: s32 = 1;
         for params {
             if it.type.type == {
-                case .VARIANT; #through; //HACK
                 case .BOOL; #through;
                 case .INTEGER;
                     if it.type.runtime_size <= 4
@@ -268,7 +260,7 @@ XX,     /* 1 */type);
                 case .FLOAT;
                     result = bind(statement, param_number, <<cast(*float64) it.value_pointer);
                 case .STRING;
-                    result = bind(statement, param_number, <<cast(*string ) it.value_pointer);
+                    result = bind(statement, param_number, <<cast( *string) it.value_pointer);
             }
             if result != .OK then return result, rows;
             param_number += 1;
@@ -312,6 +304,7 @@ XX,             /* 1 */type);
         table_remove(*context.db_cache._%1, id);
 XX,     /* 1 */ T.type);
         pointer = null;
+        fetch_id = 0;
 
         result = finalize(statement);
         return result;
@@ -326,18 +319,10 @@ XX,     /* 1 */ T.type);
         return result;
     }
 
-    fetch :: ($type: Type, cached_this: *CachedThis) -> result: Result {
-        assert(cached_this.fetch_id != 0);
-        cached: Cached(type);
-        result, fetched := select_by_id(type, xx cached_this.fetch_id);
-        cached_this.pointer = fetched.pointer;
-        return result;
-    }
-
     fetch_row :: (obj: *$T/Model, statement: Statement) {
-        obj.id       = xx column_int64(statement, 0);
-        obj.created  =    column_int  (statement, 1);
-        obj.modified =    column_int  (statement, 2);
+        obj.id       = column_int64(statement, 0);
+        obj.created  = column_int  (statement, 1);
+        obj.modified = column_int  (statement, 2);
         #insert -> string {
             sb: String_Builder;
             column_number := INTERNAL_COLUMN_COUNT;
@@ -346,7 +331,7 @@ XX,     /* 1 */ T.type);
         {
             id := column_int64(statement, %2);
             found := table_find_pointer(*context.db_cache._%3, id);
-            if found then obj.%1 = .{xx id, found}; else obj.%1 = .{xx id, null};
+            if found then obj.%1 = .{id, found}; else obj.%1 = .{id, null};
         }
 XX,             /* 1 */it.name,
                 /* 2 */column_number,
@@ -383,13 +368,7 @@ XX,                 /* 1 */it.name,
         }
     }
 
-    is_a_model :: (type: Type) -> bool {
-        return (#import "Compiler").is_subclass_of(cast(*Type_Info) type, "Model");
-    }
-
-    is_a_model :: (info: *Type_Info_Struct) -> bool {
-        return (#import "Compiler").is_subclass_of(cast(*Type_Info) info, "Model");
-    }
+    is_a_model :: x => (#import "Compiler").is_subclass_of(cast(*Type_Info) x, "Model");
 
     get_sqlite_cast_string_for_model_member :: (info: Type_Info_Struct_Member) -> string {
         return ifx info.type.type == .BOOL then " cast(int)";
@@ -421,22 +400,19 @@ XX,                 /* 1 */it.name,
     member_is_foreign_key :: (member: Type_Info_Struct_Member) -> bool {
         if member.type.type == .STRUCT {
             struct_name := (cast(*Type_Info_Struct) member.type).name;
-            return struct_name == "Cached" || struct_name == "CachedThis";
+            return struct_name == "Cached";
         }
         return false;
     }
 
     get_foreign_key_name_from :: (member: Type_Info_Struct_Member, model_name: string) -> string {
         member_info := (cast(*Type_Info_Struct) member.type);
-        if member_info.name == "CachedThis" then return model_name;
         return (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_info.constant_storage[member_info.specified_parameters[0].offset_into_constant_storage]).name; // thanks, shwa!
     }
 
     is_fetched :: (using cached: $T/Cached)  -> bool { return pointer != null; }
-    is_fetched :: (using cached: CachedThis) -> bool { return pointer != null; }
 
     is_null :: (using cached: $T/Cached)  -> bool { return fetch_id == 0; }
-    is_null :: (using cached: CachedThis) -> bool { return fetch_id == 0; }
 
     flush_cache :: () #expand { `__flush_database_cache(); } // :P
 
