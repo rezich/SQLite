@@ -33,6 +33,9 @@ select_from(T, where, ..params, limit=0, offset=0)
 delete(*cached_obj)
     delete a cached database object from the database
 
+execute(S, sql, ..params)
+    executes SQL with given params, returns resulting rows of type S
+
 fetch(*cached_obj)
     fetch the object from the database
 
@@ -141,11 +144,11 @@ XX,             /* 1 */T
         return result, .{new_obj.id, new_obj};
     }
 
-    set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand {
+    set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand { // wish this didn't have to be #expand...
         SQL_STATEMENT :: #run sprint("UPDATE %1 SET %2 = ?, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
             /* 1 */T.type,
             /* 2 */field_name
-        ); //TODO: return modified
+        );
 
         result, statement := prepare_v2(SQL_STATEMENT);
         if result != .OK then return result;
@@ -203,7 +206,7 @@ XX,     /* 1 */field_name);
             /* 1 */T.type,
             /* 2 */builder_to_string(*sb_fields)
             );
-        } //TODO: return modified
+        }
         INDEX_OF_ID_QUESTION_MARK :: #run serializable_members_of(T.type).count+1;
 
         result, statement := prepare_v2(SQL_STATEMENT);
@@ -290,6 +293,7 @@ XX,     /* 1 */type);
     }
 
     select_from :: ($type: Type, $where := "", params: ..Any, $limit := 0, $offset := 0) -> result: Result, rows: [..] Cached(type) {
+        assert(is_a_model(type));
         SQL_STATEMENT :: #run -> string {
             sb: String_Builder;
             for serializable_members_of(type) {
@@ -381,13 +385,18 @@ XX,     /* 1 */T.type);
         return result;
     }
 
-    fetch_row :: (obj: *$T/Model, statement: Statement) {
-        obj.id       = column_int64(statement, 0);
-        obj.created  = column_int  (statement, 1);
-        obj.modified = column_int  (statement, 2);
+    fetch_row :: (obj: *$T, statement: Statement) {
+        #insert -> string {
+            if is_a_model(T) then return #string XX
+            obj.id       = column_int64(statement, 0);
+            obj.created  = column_int  (statement, 1);
+            obj.modified = column_int  (statement, 2);
+        XX; else return "";
+        }
         #insert -> string {
             sb: String_Builder;
-            column_number := INTERNAL_COLUMN_COUNT;
+            column_number := 0;
+            #if #run is_a_model(T) then column_number = INTERNAL_COLUMN_COUNT;
             for serializable_members_of(T) {
                 if member_is_foreign_key(it) then print_to_builder(*sb, #string XX
         {
@@ -430,7 +439,45 @@ XX,                 /* 1 */it.name,
         }
     }
 
-    is_a_model :: x => (#import "Compiler").is_subclass_of(cast(*Type_Info) x, "Model");
+    execute :: ($row_type: Type, sql: string, params: ..Any) -> result: Result, selected: [..] row_type {
+        //TODO: ensure that the parameter count is correct, at least
+        rows: [..] row_type;
+
+        result, statement := prepare_v2(sql);
+        if result != .OK then return result, rows;
+
+        param_number: s32 = 1;
+        for params {
+            if it.type.type == {
+                case .BOOL; #through;
+                case .INTEGER;
+                    if it.type.runtime_size <= 4
+                        result = bind(statement, param_number, <<cast(*s32) it.value_pointer);
+                    else
+                        result = bind(statement, param_number, <<cast(*s64) it.value_pointer);
+                case .FLOAT;
+                    result = bind(statement, param_number, <<cast(*float64) it.value_pointer);
+                case .STRING;
+                    result = bind(statement, param_number, <<cast( *string) it.value_pointer);
+            }
+            if result != .OK then return result, rows;
+            param_number += 1;
+        }
+
+        while true { result = step(statement); if result == {
+            case .ROW;
+                fetch_row(array_add(*rows), statement);
+                continue;
+            case .BUSY; continue;
+            case .DONE; break;
+            case;       return result, rows;
+        }}
+
+        result = finalize(statement);
+        return result, rows;
+    }
+
+    is_a_model :: inline x => (#import "Compiler").is_subclass_of(cast(*Type_Info) x, "Model");
 
     get_sqlite_cast_string_for_model_member :: (info: Type_Info_Struct_Member) -> string {
         return ifx info.type.type == .BOOL then " cast(int)";

@@ -20,7 +20,7 @@ main :: () {
     ORM.init(DATABASE_FILENAME); // omit the filename for an in-memory database
     result: SQL.Result;
     {
-        user1, user2: ORM.Cached(User);
+        user1, user2, user3: ORM.Cached(User);
 
         log("inserting a User");
         result, user1 = ORM.insert(User.{
@@ -37,6 +37,13 @@ main :: () {
             favorite_floating_point_number=1.111,
             corporate_id=3_000_000_001,
             is_awesome=true
+        }); AssertNoErrors();
+
+        log("inserting a third User");
+        result, user3 = ORM.insert(User.{
+            name="Charlie",
+            age=17,
+            favorite_floating_point_number=0
         }); AssertNoErrors();
 
         log("inserting three Posts, ignoring the second return value");
@@ -87,6 +94,11 @@ main :: () {
         result = ORM.delete(*user1); AssertNoErrors();
         assert(!ORM.is_fetched(user1));
         assert(ORM.is_null(user1));
+
+        log("insert some posts for the third user");
+        ORM.insert(Post.{body="Hey",   author=user3});
+        ORM.insert(Post.{body="Hi",    author=user3});
+        ORM.insert(Post.{body="Hello", author=user3});
 
         list_posts_for(user2);
         list_posts_for(user2, limit=2);
@@ -146,6 +158,24 @@ main :: () {
         result = ORM.fetch(*post.author); AssertNoErrors();
         log("  now we know the Post's author's name: it's %", post.author.name);
     }
+    log("testing generic SQL execution");
+    {
+        My_Selection :: struct {
+            count: int;
+            max_modified: string;
+        }
+        result, rows := ORM.execute(My_Selection, "SELECT COUNT(*) AS count, MAX(modified) AS max_modified FROM Post;"); AssertNoErrors();
+        log("My_Selection: %", rows);
+    }{
+        Another_Selection :: struct {
+            count: int;
+            max_modified: int;
+        }
+        AUTHOR_ID :: 2;
+        result, rows := ORM.execute(Another_Selection, "SELECT COUNT(*), MAX(strftime(\"%s\", modified)) FROM Post WHERE author_id = ?;", AUTHOR_ID); AssertNoErrors();
+        log("Another_Selection: %", rows);
+    }
+    ORM.fini();
     ORM.fini();
 }
 
