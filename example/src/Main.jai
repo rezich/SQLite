@@ -14,8 +14,10 @@ Post :: struct { using #as model: ORM.Model;
 }
 
 main :: () {
+    DATABASE_FILENAME :: "database.db";
     set_working_directory((#import "String").path_strip_filename((#import "System").get_path_of_running_executable()));
-    ORM.init("database.db"); // omit the filename for an in-memory database
+    (#import "File").file_delete(DATABASE_FILENAME); // delete the databse every run for now
+    ORM.init(DATABASE_FILENAME); // omit the filename for an in-memory database
     result: SQL.Result;
     {
         user1, user2: ORM.Cached(User);

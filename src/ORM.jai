@@ -44,7 +44,6 @@ flush_cache()
  */
 
 ORM :: struct {
-    DELETE_DATABASE_EVERY_RUN :: true; // for testing
     INTERNAL_COLUMN_COUNT :: 3; // id, created, modified
 
     Model :: struct {
@@ -59,7 +58,6 @@ ORM :: struct {
     }
 
     init :: (filename := ":memory:") #expand {
-        #if DELETE_DATABASE_EVERY_RUN if filename != ":memory:" then (#import "File").file_delete(filename);
         database_already_existed := filename != ":memory:" && (#import "File_Utilities").file_exists(filename);
 
         { result, error := open(filename); AssertIfError(); }
@@ -76,9 +74,8 @@ ORM :: struct {
 
     fini :: inline () { close(); }
 
-    insert :: (_obj: $T/Model) -> result: Result, user: Cached(T) {
-        assert(_obj.id == 0, "Attempted to insert a % with an id already set!", T);
-        obj := _obj;
+    insert :: (obj: $T/Model) -> result: Result, user: Cached(T) {
+        assert(obj.id == 0, "Attempted to insert a % with an id already set!", T);
 
         SQL_STATEMENT :: #run -> string {
             sb_values, sb_question_marks: String_Builder;
@@ -104,9 +101,9 @@ ORM :: struct {
             question_mark_index := 1;
             for serializable_members_of(T) {
                 print_to_builder(*sb, ifx member_is_foreign_key(it) then #string XX
-        result = ifx _obj.%2.fetch_id == 0 then bind(statement, %1) else bind(statement, %1, _obj.%2.fetch_id);
+        result = ifx obj.%2.fetch_id == 0 then bind(statement, %1) else bind(statement, %1, obj.%2.fetch_id);
 XX              else #string XX
-        result = bind(statement, %1, %3_obj.%2);
+        result = bind(statement, %1, %3obj.%2);
 XX,             /* 1 */question_mark_index,
                 /* 2 */it.name,
                 /* 3 */get_sqlite_cast_string_for_model_member(it)
@@ -119,30 +116,29 @@ XX              );
             return builder_to_string(*sb);
         }
 
-        result = Result.BUSY;
+        new_obj: *T;
+
         rows := 0;
-        while true {
-            result = step(statement);
-            ifx result == {
-                case .ROW;
-                    rows += 1;
-                    obj.id       = column_int64(statement, 0);
-                    obj.created  = column_int  (statement, 1);
-                    obj.modified = obj.created;
-                    continue;
-                case .DONE; break;
-                case; return result, .{};
-            }
-        }
+        while true { result = step(statement); ifx result == {
+            case .ROW;
+                rows += 1;
+                id := column_int64(statement, 0);
+                #insert #run sprint(#string XX
+                new_obj = table_set(*context.db_cache._%, id, obj);
+XX,             /* 1 */T
+                );
+                new_obj.id = id;
+                new_obj.created  = column_int(statement, 1);
+                new_obj.modified = new_obj.created;
+                continue;
+            case .BUSY; continue;
+            case .DONE; break;
+            case;       return result, .{};
+        }}
         assert(rows == 1);
 
-        #insert #run sprint(#string XX
-        pointer := table_set(*context.db_cache._%, obj.id, obj);
-XX,     /* 1 */T
-        );
-
         result = finalize(statement);
-        return result, .{obj.id, pointer};
+        return result, .{new_obj.id, new_obj};
     }
 
     set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand {
@@ -159,35 +155,33 @@ XX,     /* 1 */T
             if info.type == {
                 case .BOOL; #through;
                 case .INTEGER;
-                    if type_info(T2).runtime_size <= 4
-                        return "result = bind(statement, 1, cast(s32) value);";
-                    else
-                        return "result = bind(statement, 1, cast(s64) value);";
-                case .FLOAT;
-                    return "result = bind(statement, 1, cast(float64) value);";
-                case .STRING;
-                    return "result = bind(statement, 1, cast( string) value);";
-            }
-            return "assert(false, \"unknown value type passed to set()\");";
-        }
+                    if type_info(T2).runtime_size <= 4 then return #string XX
+        result = bind(statement, 1, cast(s32) value);
+XX;                 else return #string XX
+        result = bind(statement, 1, cast(s64) value);
+XX;             case .FLOAT; return #string XX
+        result = bind(statement, 1, cast(float64) value);
+XX;             case .STRING; return #string XX
+        result = bind(statement, 1, cast( string) value);
+XX;         }
+            return #string XX
+        assert(false, "unknown value type passed to set()");
+XX;     }
         if result != .OK then return result;
 
         result = bind(statement, 2, cached_obj.id);
         if result != .OK then return result;
 
-        result = Result.BUSY;
         rows := 0;
-        while true {
-            result = step(statement);
-            ifx result == {
-                case .ROW;
-                    rows += 1;
-                    cached_obj.modified  = column_int(statement, 0);
-                    continue;
-                case .DONE; break;
-                case; return result;
-            }
-        }
+        while true { result = step(statement); ifx result == {
+            case .ROW;
+                rows += 1;
+                cached_obj.modified  = column_int(statement, 0);
+                continue;
+            case .BUSY; continue;
+            case .DONE; break;
+            case;       return result;
+        }}
         assert(rows == 1);
 
         #insert #run sprint(#string XX
@@ -237,19 +231,16 @@ XX,             );
         result = bind(statement, INDEX_OF_ID_QUESTION_MARK, cached_obj.id);
         if result != .OK then return result;
 
-        result = Result.BUSY;
         rows := 0;
-        while true {
-            result = step(statement);
-            ifx result == {
-                case .ROW;
-                    rows += 1;
-                    cached_obj.pointer.modified  = column_int(statement, 0);
-                    continue;
-                case .DONE; break;
-                case; return result;
-            }
-        }
+        while true { result = step(statement); ifx result == {
+            case .ROW;
+                rows += 1;
+                cached_obj.pointer.modified  = column_int(statement, 0);
+                continue;
+            case .BUSY; continue;
+            case .DONE; break;
+            case;       return result;
+        }}
         assert(rows == 1);
 
 
@@ -281,12 +272,14 @@ XX,             );
 
         obj: type;
 
-        result = Result.BUSY;
-        while result == .BUSY {
-            result = step(statement);
-            if result == .ROW { fetch_row(*obj, statement); break; }
-            if result != .DONE && result != .BUSY then return result, .{};
-        }
+        rows := 0;
+        while true { result = step(statement); ifx result == {
+            case .ROW; rows += 1; fetch_row(*obj, statement); continue;
+            case .BUSY; continue;
+            case .DONE; break;
+            case;       return result, .{};
+        }}
+        assert(rows == 1);
 
         #insert #run sprint(#string XX
         pointer := table_set(*context.db_cache._%1, obj.id, obj);
@@ -336,10 +329,8 @@ XX,     /* 1 */type);
             param_number += 1;
         }
 
-        result = Result.BUSY;
-        while result == .BUSY || result == .ROW {
-            result = step(statement);
-            if result == .ROW {
+        while true { result = step(statement); if result == {
+            case .ROW;
                 obj: type;
                 fetch_row(*obj, statement);
                 #insert #run sprint(#string XX
@@ -347,9 +338,10 @@ XX,     /* 1 */type);
 XX,             /* 1 */type);
                 array_add(*rows, .{obj.id, pointer});
                 continue;
-            }
-            if result != .DONE && result != .BUSY then return result, rows;
-        }
+            case .BUSY; continue;
+            case .DONE; break;
+            case;       return result, rows;
+        }}
 
         result = finalize(statement);
         return result, rows;
@@ -364,15 +356,15 @@ XX,             /* 1 */type);
         result = bind(statement, 1, id);
         if result != .OK then return result;
 
-        result = Result.BUSY;
-        while result == .BUSY {
-            result = step(statement);
-            if result != .DONE && result != .BUSY then return result;
-        }
+        while true { result = step(statement); if result == {
+            case .BUSY; continue;
+            case .DONE; break;
+            case;       return result;
+        }}
 
         #insert #run sprint(#string XX
         table_remove(*context.db_cache._%1, id);
-XX,     /* 1 */ T.type);
+XX,     /* 1 */T.type);
         pointer = null;
         fetch_id = 0;
 
@@ -480,9 +472,8 @@ XX,                 /* 1 */it.name,
         return (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_info.constant_storage[member_info.specified_parameters[0].offset_into_constant_storage]).name; // thanks, shwa!
     }
 
-    is_fetched :: (using cached: $T/Cached)  -> bool { return pointer != null; }
-
-    is_null :: (using cached: $T/Cached)  -> bool { return fetch_id == 0; }
+    is_fetched :: (using cached: $T/Cached) -> bool { return pointer != null; }
+    is_null    :: (using cached: $T/Cached) -> bool { return fetch_id == 0;   }
 
     flush_cache :: () #expand { `__flush_database_cache(); } // :P
 

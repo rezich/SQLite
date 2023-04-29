@@ -7,10 +7,9 @@
     MAKE_MIGRATIONS  := false  // (ORM) work in progress
 );
 
-#if  ONLY_C_BINDINGS then #load "src/sqlite3.jai";
-#if !ONLY_C_BINDINGS {
+#if !ONLY_C_BINDINGS {                           #load "src/SQLite.jai";
     #if FROM_METAPROGRAM                    then #load "src/Meta.jai";
     #if FROM_METAPROGRAM && MAKE_MIGRATIONS then #load "src/Migrator.jai";
     #if FROM_METAPROGRAM || USE_ORM         then #load "src/ORM.jai";
-                                                 #load "src/SQLite.jai";
 }
+                                                 #load "src/sqlite3.jai";

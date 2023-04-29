@@ -49,7 +49,7 @@ open :: (filename := ":memory:") -> result: Result, error: string {
     return result, error;
 }
 exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> result: Result, error: string {
-    #if VERBOSE then print_color("%\n", sql, color=.MAGENTA);
+    #if VERBOSE then print_color("%\n", sql, color=.HI_MAGENTA);
     error_cstring: *s8; // TODO: reuse instead of allocating & freeing every time?
     result := cast(Result) sqlite3_exec(context.db, xx temp_c_string(sql), callback, callback_arg, *error_cstring);
     error := ifx result != .OK then to_string(cast(*u8) error_cstring);
@@ -57,7 +57,7 @@ exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> 
     return result, error;
 }
 prepare_v2 :: (sql: string) -> result: Result, statement: Statement {
-    #if VERBOSE then print_color("%\n", sql, color=.MAGENTA);
+    #if VERBOSE then verbose_begin(sql);
     sql_cstring := temp_c_string(sql);
     statement: Statement;
     return cast(Result) sqlite3_prepare_v2(context.db, cast(*s8) sql_cstring, cast(s32) c_style_strlen(sql_cstring), *statement, null), statement;
@@ -66,6 +66,7 @@ step :: (statement: Statement) -> Result {
     return cast(Result) sqlite3_step(statement);
 }
 finalize :: (statement: Statement) -> Result {
+    #if VERBOSE then verbose_end();
     return cast(Result) sqlite3_finalize(statement);
 }
 column_count :: (statement: Statement) -> s32 {
@@ -94,28 +95,57 @@ errmsg :: () -> string {
     return to_string(cast(*u8) sqlite3_errmsg(context.db));
 }
 bind :: (statement: Statement, index: s32, value: float64) -> Result {
-    #if VERBOSE then print_color("  %1: %2\n", index, value, color=.CYAN);
+    #if VERBOSE then verbose_bind(value);
     return cast(Result) sqlite3_bind_double(statement, index, value);
 }
 bind :: (statement: Statement, index: s32, value: s32) -> Result {
-    #if VERBOSE then print_color("  %1: %2\n", index, value, color=.CYAN);
+    #if VERBOSE then verbose_bind(value);
     return cast(Result) sqlite3_bind_int(statement, index, value);
 }
 bind :: (statement: Statement, index: s32, value: s64) -> Result {
-    #if VERBOSE then print_color("  %1: %2\n", index, value, color=.CYAN);
+    #if VERBOSE then verbose_bind(value);
     return cast(Result) sqlite3_bind_int64(statement, index, value);
 }
 bind :: (statement: Statement, index: s32, value: string) -> Result {
-    #if VERBOSE then print_color("  %1: %2\n", index, value, color=.CYAN);
+    #if VERBOSE then verbose_bind(value);
     value_cstring := temp_c_string(value);
     return cast(Result) sqlite3_bind_text(statement, index, cast(*s8) value_cstring, cast(s32) c_style_strlen(value_cstring), null);
 }
 bind :: (statement: Statement, index: s32) -> Result {
-    #if VERBOSE then print_color("  %1: NULL\n", index, color=.CYAN);
+    #if VERBOSE then verbose_bind(null);
     return cast(Result) sqlite3_bind_null(statement, index);
 }
 
 #scope_file
-#load "sqlite3.jai";
+
+#if VERBOSE {
+    #import "Print_Color";
+    #import "String";
+    #add_context sqlite_verbose: struct {
+        statement: string;
+        parameter_count: int;
+        parameters: [100] string;
+    };
+    verbose_begin :: (statement: string) { context.sqlite_verbose.statement = statement; }
+    verbose_bind :: (param: $T) {
+        using context.sqlite_verbose;
+        ifx type_info(T).type == {
+            case .POINTER; parameters[parameter_count] = "NULL";
+            case .STRING; parameters[parameter_count] = tprint("\"%\"", param);
+            case; parameters[parameter_count] = tprint("%", param);
+        }
+        parameter_count += 1;
+    }
+    verbose_end :: () {
+        using context.sqlite_verbose;
+        for split(statement, "?") {
+            with_console_color(.MAGENTA, write_string(it));
+            if it_index < parameter_count then with_console_color(.CYAN, write_string(parameters[it_index]));
+        }
+        write_string("\n");
+        parameter_count = 0;
+        statement = "";
+    }
+}
+
 #import "Basic";
-#if VERBOSE then #import "Print_Color";
