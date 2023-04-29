@@ -56,6 +56,48 @@ exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> 
     sqlite3_free(error_cstring); // TODO: reuse instead of allocating & freeing every time?
     return result, error;
 }
+// this version of exec is not actually SQLite's exec,
+// but it does the same thing, i.e. build a statement & execute it.
+exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp) -> result: Result, selected: [..] row_type {
+    //TODO: ensure that the parameter count is correct, at least
+    //TODO: probably also (optionally) check column names
+    rows: [..] row_type;
+    rows.allocator = allocator;
+
+    result, statement := prepare_v2(sql);
+    if result != .OK then return result, rows;
+
+    param_number: s32 = 1;
+    for params {
+        if it.type.type == {
+            case .BOOL;
+                result = bind(statement, param_number, <<cast(*bool) it.value_pointer);
+            case .INTEGER;
+                if it.type.runtime_size <= 4
+                    result = bind(statement, param_number, <<cast(*s32) it.value_pointer);
+                else
+                    result = bind(statement, param_number, <<cast(*s64) it.value_pointer);
+            case .FLOAT;
+                result = bind(statement, param_number, <<cast(*float64) it.value_pointer);
+            case .STRING;
+                result = bind(statement, param_number, <<cast( *string) it.value_pointer);
+        }
+        if result != .OK then return result, rows;
+        param_number += 1;
+    }
+
+    while true { result = step(statement); if result == {
+        case .ROW;
+            fetch_row(array_add(*rows), statement);
+            continue;
+        case .BUSY; continue;
+        case .DONE; break;
+        case;       return result, rows;
+    }}
+
+    result = finalize(statement);
+    return result, rows;
+}
 prepare_v2 :: (sql: string) -> result: Result, statement: Statement {
     #if VERBOSE then verbose_begin(sql);
     sql_cstring := temp_c_string(sql);
@@ -84,6 +126,9 @@ column_int64 :: (statement: Statement, column_number: s32) -> s64 {
 column_text :: (statement: Statement, column_number: s32) -> string {
     text_cstring := cast(*u8) sqlite3_column_text(statement, column_number);
     return copy_temporary_string(to_string(text_cstring));
+}
+column_type :: (statement: Statement, column_number: s32) -> enum { INTEGER; FLOAT; BLOB; NULL; TEXT; } {
+    return xx sqlite3_column_name(statement, column_number);
 }
 close :: () -> result: Result {
     return cast(Result) sqlite3_close(context.db);
@@ -115,6 +160,92 @@ bind :: (statement: Statement, index: s32) -> Result {
     #if VERBOSE then verbose_bind(null);
     return cast(Result) sqlite3_bind_null(statement, index);
 }
+// nice to have:
+bind :: (statement: Statement, index: s32, value: bool) -> Result {
+    #if VERBOSE then verbose_bind(value);
+    return cast(Result) sqlite3_bind_int(statement, index, xx ifx value then 1);
+}
+
+#scope_module
+
+serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member {
+    members := serializable_members_of(type_info(type));
+    return members;
+}
+
+serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Member {
+    NOTE_DO_NOT_SERIALIZE :: "do_not_serialize";
+
+    members: [..] Type_Info_Struct_Member;
+    for info.members {
+        is_a_valid_type :=
+            it.type.type == .BOOL    ||
+            it.type.type == .INTEGER ||
+            it.type.type == .FLOAT   ||
+            it.type.type == .STRING;
+        #if USE_ORM || FROM_METAPROGRAM { if ORM.is_a_model(info) && ORM.member_is_foreign_key(it) then is_a_valid_type = true; }
+        if !is_a_valid_type then continue;
+        has_do_not_serialize_note := false;
+        #if USE_ORM || FROM_METAPROGRAM { for it.notes if it == NOTE_DO_NOT_SERIALIZE { has_do_not_serialize_note = true; break; } }
+        if has_do_not_serialize_note then continue;
+        array_add(*members, it);
+    }
+    return members;
+}
+
+fetch_row :: (obj: *$T, statement: Statement) {
+    #if (USE_ORM || FROM_METAPROGRAM) && #run ORM.is_a_model(T) {
+        obj.id       = column_int64(statement, 0);
+        obj.created  = column_int  (statement, 1);
+        obj.modified = column_int  (statement, 2);
+    }
+    #insert -> string {
+        sb: String_Builder;
+        column_number := 0;
+        #if (USE_ORM || FROM_METAPROGRAM) && #run ORM.is_a_model(T) then column_number = ORM.INTERNAL_COLUMN_COUNT;
+        for serializable_members_of(T) {
+            handled := false;
+            #if USE_ORM || FROM_METAPROGRAM then if ORM.member_is_foreign_key(it) then { print_to_builder(*sb, #string XX
+    {
+        id := column_int64(statement, %2);
+        found := table_find_pointer(*context.db_cache._%3, id);
+        if found then obj.%1 = .{id, found}; else obj.%1 = .{id, null};
+    }
+XX,         /* 1 */it.name,
+            /* 2 */column_number,
+            /* 3 */ORM.get_foreign_key_name_from(it, sprint("%", T))
+            ); handled = true;
+            }
+            if !handled then if it.type.type == {
+                case .BOOL; print_to_builder(*sb, #string XX
+    obj.%1 = cast(bool) column_int(statement, %2);
+XX,             /* 1 */it.name,
+                /* 2 */column_number
+                );
+                case .INTEGER; print_to_builder(*sb, #string XX
+    obj.%1 = column_int%3(statement, %2);
+XX,             /* 1 */it.name,
+                /* 2 */column_number,
+                /* 3 */ifx it.type.runtime_size == 8 then "64"
+                );
+                case .FLOAT; print_to_builder(*sb, #string XX
+    obj.%1 = %3column_double(statement, %2);
+XX,             /* 1 */it.name,
+                /* 2 */column_number,
+                /* 3 */ifx it.type.runtime_size == 4 then "xx "
+                );
+                case .STRING; print_to_builder(*sb, #string XX
+    obj.%1 = column_text(statement, %2);
+XX,             /* 1 */it.name,
+                /* 2 */column_number
+                );
+                case; continue;
+            }
+            column_number += 1;
+        }
+        return builder_to_string(*sb);
+    }
+}
 
 #scope_file
 
@@ -131,8 +262,9 @@ bind :: (statement: Statement, index: s32) -> Result {
         using context.sqlite_verbose;
         ifx type_info(T).type == {
             case .POINTER; parameters[parameter_count] = "NULL";
-            case .STRING; parameters[parameter_count] = tprint("\"%\"", param);
-            case; parameters[parameter_count] = tprint("%", param);
+            case .STRING;  parameters[parameter_count] = tprint("\"%\"", param);
+            case .BOOL;    parameters[parameter_count] = tprint("%", ifx param then 1);
+            case;          parameters[parameter_count] = tprint("%", param);
         }
         parameter_count += 1;
     }

@@ -10,6 +10,48 @@ as well as [more Jai-friendly wrapper functions](src/SQLite.jai).
 
 *(note that the latter is not an exhaustive port of all SQLite functions, at least, yet)*
 
+the database handle parameter is omitted from every wrapping procedure signature, as it is stored in
+the `context` instead.
+
+included in this wrapper is a variant of `exec()` that doesn't actually run SQLite's `exec()`, but
+does more or less the same thing, except it lets you pass in a variadic number of parameters to be
+`bind()`ed at the end, and a type at the beginning—in addition to returning the SQLite result
+value, it also returns an array of that specified type, with its members containing the results of
+the query. this works with Jai's anonymous structs:
+
+```jai
+min_author_id := 2;
+result, rows := SQLite.exec(
+    struct { author_name: string; count: int; total_score: int; },
+    #string __SQL__
+SELECT
+    User.name       AS author_name,
+    COUNT(*)        AS count,
+    SUM(Post.score) AS total_score
+
+FROM
+    Post
+
+LEFT JOIN
+    User
+ON
+    User.id = Post.author_id
+
+WHERE
+    author_id >= ?
+
+GROUP BY
+    author_id
+__SQL__,
+    min_author_id
+);
+assert(result == .OK);
+for rows log("%1\n  posts: %2\n  total score: %3", it.author_name, it.count, it.total_score);
+```
+
+the array returned by this version of `exec()` is allocated using the optional `allocator`
+parameter, **which is set to `temp` by default.**
+
 you can also `#import "SQLite"(USE_ORM=true);`, which, if you've set up your metaprogram correctly
 (see [the example](example/)), allows you to more easily create Jai structs that can automatically
 interface with SQLite, like this:
@@ -60,10 +102,8 @@ TODO
  - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`...?
  - check the number of query-fragment question marks vs. the number of passed-in parameters at compile time
  - delete most of the code in `select_by_id(T, id)`
- - `update(cached_obj, field_name, value)`
- - `update(T, field_name, value, where, params)`
- - `update(T, field_names, values, where, params)` (...)
- - `delete_from(T, where, params)`
+ - `set(T, field_name, value, where, ..params)`
+ - `delete_from(T, where, ..params)`
  - `insert(objs)`
  - (...)
  - some way of doing `operator ==` with `Cached(T)`s

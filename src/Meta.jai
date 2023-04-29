@@ -25,7 +25,7 @@ XX,                 /* 1 */ name);
 ,created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ,modified TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 XX                  );
-                    for ORM.serializable_members_of(code_struct.defined_type) {
+                    for serializable_members_of(code_struct.defined_type) {
                         if ORM.member_is_foreign_key(it) {
                             print_to_builder(*sb_table, #string XX
 ,%1_id INTEGER

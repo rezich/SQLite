@@ -33,9 +33,6 @@ select_from(T, where, ..params, limit=0, offset=0)
 delete(*cached_obj)
     delete a cached database object from the database
 
-execute(S, sql, ..params)
-    executes SQL with given params, returns resulting rows of type S
-
 fetch(*cached_obj)
     fetch the object from the database
 
@@ -156,8 +153,9 @@ XX,             /* 1 */T
         #insert -> string {
             info := type_info(T2);
             if info.type == {
-                case .BOOL; #through;
-                case .INTEGER;
+                case .BOOL; return #string XX
+        result = bind(statement, 1, value);
+XX;             case .INTEGER;
                     if type_info(T2).runtime_size <= 4 then return #string XX
         result = bind(statement, 1, cast(s32) value);
 XX;                 else return #string XX
@@ -385,133 +383,14 @@ XX,     /* 1 */T.type);
         return result;
     }
 
-    fetch_row :: (obj: *$T, statement: Statement) {
-        #insert -> string {
-            if is_a_model(T) then return #string XX
-            obj.id       = column_int64(statement, 0);
-            obj.created  = column_int  (statement, 1);
-            obj.modified = column_int  (statement, 2);
-        XX; else return "";
-        }
-        #insert -> string {
-            sb: String_Builder;
-            column_number := 0;
-            #if #run is_a_model(T) then column_number = INTERNAL_COLUMN_COUNT;
-            for serializable_members_of(T) {
-                if member_is_foreign_key(it) then print_to_builder(*sb, #string XX
-        {
-            id := column_int64(statement, %2);
-            found := table_find_pointer(*context.db_cache._%3, id);
-            if found then obj.%1 = .{id, found}; else obj.%1 = .{id, null};
-        }
-XX,             /* 1 */it.name,
-                /* 2 */column_number,
-                /* 3 */get_foreign_key_name_from(it, sprint("%", T))
-                );
-                else if it.type.type == {
-                    case .BOOL; print_to_builder(*sb, #string XX
-        obj.%1 = cast(bool) column_int(statement, %2);
-XX,                 /* 1 */it.name,
-                    /* 2 */column_number
-                    );
-                    case .INTEGER; print_to_builder(*sb, #string XX
-        obj.%1 = column_int%3(statement, %2);
-XX,                 /* 1 */it.name,
-                    /* 2 */column_number,
-                    /* 3 */ifx it.type.runtime_size == 8 then "64"
-                    );
-                    case .FLOAT; print_to_builder(*sb, #string XX
-        obj.%1 = %3column_double(statement, %2);
-XX,                 /* 1 */it.name,
-                    /* 2 */column_number,
-                    /* 3 */ifx it.type.runtime_size == 4 then "xx "
-                    );
-                    case .STRING; print_to_builder(*sb, #string XX
-        obj.%1 = column_text(statement, %2);
-XX,                 /* 1 */it.name,
-                    /* 2 */column_number
-                    );
-                    case; continue;
-                }
-                column_number += 1;
-            }
-            return builder_to_string(*sb);
-        }
-    }
-
-    execute :: ($row_type: Type, sql: string, params: ..Any) -> result: Result, selected: [..] row_type {
-        //TODO: ensure that the parameter count is correct, at least
-        rows: [..] row_type;
-
-        result, statement := prepare_v2(sql);
-        if result != .OK then return result, rows;
-
-        param_number: s32 = 1;
-        for params {
-            if it.type.type == {
-                case .BOOL; #through;
-                case .INTEGER;
-                    if it.type.runtime_size <= 4
-                        result = bind(statement, param_number, <<cast(*s32) it.value_pointer);
-                    else
-                        result = bind(statement, param_number, <<cast(*s64) it.value_pointer);
-                case .FLOAT;
-                    result = bind(statement, param_number, <<cast(*float64) it.value_pointer);
-                case .STRING;
-                    result = bind(statement, param_number, <<cast( *string) it.value_pointer);
-            }
-            if result != .OK then return result, rows;
-            param_number += 1;
-        }
-
-        while true { result = step(statement); if result == {
-            case .ROW;
-                fetch_row(array_add(*rows), statement);
-                continue;
-            case .BUSY; continue;
-            case .DONE; break;
-            case;       return result, rows;
-        }}
-
-        result = finalize(statement);
-        return result, rows;
-    }
-
     is_a_model :: inline x => (#import "Compiler").is_subclass_of(cast(*Type_Info) x, "Model");
 
     get_sqlite_cast_string_for_model_member :: (info: Type_Info_Struct_Member) -> string {
         return ifx info.type.type == .BOOL then " cast(int)";
     }
 
-    serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member {
-        return serializable_members_of(type_info(type));
-    }
-
-    serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Member {
-        NOTE_DO_NOT_SERIALIZE :: "do_not_serialize";
-
-        members: [..] Type_Info_Struct_Member;
-        for info.members {
-            if  !member_is_foreign_key(it) &&
-                it.type.type != .BOOL      &&
-                it.type.type != .INTEGER   &&
-                it.type.type != .FLOAT     &&
-                it.type.type != .STRING
-            then continue;
-            has_do_not_serialize_note := false;
-            for it.notes if it == NOTE_DO_NOT_SERIALIZE { has_do_not_serialize_note = true; break; }
-            if has_do_not_serialize_note then continue;
-            array_add(*members, it);
-        }
-        return members;
-    }
-
     member_is_foreign_key :: (member: Type_Info_Struct_Member) -> bool {
-        if member.type.type == .STRUCT {
-            struct_name := (cast(*Type_Info_Struct) member.type).name;
-            return struct_name == "Cached";
-        }
-        return false;
+        return member.type.type == .STRUCT && (cast(*Type_Info_Struct) member.type).name == "Cached";
     }
 
     get_foreign_key_name_from :: (member: Type_Info_Struct_Member, model_name: string) -> string {

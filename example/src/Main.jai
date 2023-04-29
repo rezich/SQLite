@@ -18,7 +18,8 @@ main :: () {
     set_working_directory((#import "String").path_strip_filename((#import "System").get_path_of_running_executable()));
     (#import "File").file_delete(DATABASE_FILENAME); // delete the databse every run for now
     ORM.init(DATABASE_FILENAME); // omit the filename for an in-memory database
-    result: SQL.Result;
+    result: SQLite.Result;
+    remembered_post_id: s64;
     {
         user1, user2, user3: ORM.Cached(User);
 
@@ -28,7 +29,7 @@ main :: () {
             age=32,
             favorite_floating_point_number=3.14,
             corporate_id=3_000_000_000
-        }); AssertNoErrors();
+        }); AssertResultOK();
 
         log("inserting another User");
         result, user2 = ORM.insert(User.{
@@ -37,35 +38,44 @@ main :: () {
             favorite_floating_point_number=1.111,
             corporate_id=3_000_000_001,
             is_awesome=true
-        }); AssertNoErrors();
+        }); AssertResultOK();
 
         log("inserting a third User");
         result, user3 = ORM.insert(User.{
             name="Charlie",
             age=17,
             favorite_floating_point_number=0
-        }); AssertNoErrors();
+        }); AssertResultOK();
+
+        {
+            log("inserting a Post, and remembering the number for later");
+            result, post := ORM.insert(Post.{
+                body="Remembered post",
+                author=user2
+            });
+            remembered_post_id = post.id;
+        }
 
         log("inserting three Posts, ignoring the second return value");
         result = ORM.insert(Post.{
             body="First post",
             author=user2
-        }); AssertNoErrors();
+        }); AssertResultOK();
         result = ORM.insert(Post.{
             body="Second post",
             author=user2
-        }); AssertNoErrors();
+        }); AssertResultOK();
         result = ORM.insert(Post.{
             body="Third post",
             author=user2
-        }); AssertNoErrors();
+        }); AssertResultOK();
 
         log("inserting a Post");
         parent_post, child_post: ORM.Cached(Post);
         result, parent_post = ORM.insert(Post.{
             body="Parent Post",
             author=user1
-        }); AssertNoErrors();
+        }); AssertResultOK();
         log("  post id % will be the parent", parent_post.id);
 
         log("inserting another Post, with the previous Post as its parent");
@@ -73,14 +83,14 @@ main :: () {
             body="Child Post",
             author=user1,
             parent=parent_post
-        }); AssertNoErrors();
+        }); AssertResultOK();
         log("  Post id % will be the child", child_post.id);
 
         child_post_id := child_post.id;
         {
             post: ORM.Cached(Post);
             log("selecting Post id %, the child", child_post_id);
-            result, post = ORM.select_by_id(Post, child_post_id); AssertNoErrors();
+            result, post = ORM.select_by_id(Post, child_post_id); AssertResultOK();
 
             ORM.fetch(*post.parent);
             assert(!ORM.is_null(post.parent));
@@ -91,14 +101,17 @@ main :: () {
         }
 
         log("deleting the first User");
-        result = ORM.delete(*user1); AssertNoErrors();
+        result = ORM.delete(*user1); AssertResultOK();
         assert(!ORM.is_fetched(user1));
         assert(ORM.is_null(user1));
 
         log("insert some posts for the third user");
-        ORM.insert(Post.{body="Hey",   author=user3});
-        ORM.insert(Post.{body="Hi",    author=user3});
-        ORM.insert(Post.{body="Hello", author=user3});
+        {
+            post1, post2, post3: ORM.Cached(Post);
+            result, post1 = ORM.insert(Post.{ body="Hey",   author=user3               }); AssertResultOK();
+            result, post2 = ORM.insert(Post.{ body="Hi",    author=user3, parent=post1 }); AssertResultOK();
+            result, post3 = ORM.insert(Post.{ body="Hello", author=user3, parent=post2 }); AssertResultOK();
+        }
 
         list_posts_for(user2);
         list_posts_for(user2, limit=2);
@@ -113,7 +126,7 @@ main :: () {
                 /* 4 */ifx offset then tprint(" starting after #%", offset)
                 );
                 result, posts := ORM.select_from(Post, where="author_id = ?", author.id, limit=limit, offset=offset);
-                AssertNoErrors();
+                AssertResultOK();
                 for posts log("  % %", it.id, it.body);
             }
         }
@@ -129,20 +142,20 @@ main :: () {
         new_name := "Robert";
         log("changing %'s name to %", user2.name, new_name);
         user2.name = new_name;
-        result = ORM.update(user2); AssertNoErrors();
-        result = ORM.fetch(*user2); AssertNoErrors();
+        result = ORM.update(user2); AssertResultOK();
+        result = ORM.fetch(*user2); AssertResultOK();
         assert(user2.name == new_name);
 
         log("but actually let's change it back now, a simpler way");
-        result = ORM.set(user2, "name", old_name); AssertNoErrors();
+        result = ORM.set(user2, "name", old_name); AssertResultOK();
         assert(user2.name == old_name);
         log("and let's change his age too");
         result = ORM.set(user2, "age", 47);
         assert(user2.age == 47);
     }{
         post: ORM.Cached(Post);
-        log("selecting the first Post");
-        result, post = ORM.select_by_id(Post, 1); AssertNoErrors();
+        log("selecting the post we remembered way earlier");
+        result, post = ORM.select_by_id(Post, remembered_post_id); AssertResultOK();
         assert(ORM.is_fetched(post.author));
         log("  we can tell the Post's author's name is % because it's still in the cache.", post.author.name);
     }
@@ -150,12 +163,12 @@ main :: () {
     ORM.flush_cache();
     {
         post: ORM.Cached(Post);
-        log("selecting the first Post");
-        result, post = ORM.select_by_id(Post, 1); AssertNoErrors();
+        log("selecting the post we remembered way earlier");
+        result, post = ORM.select_by_id(Post, remembered_post_id); AssertResultOK();
         assert(!ORM.is_fetched(post.author));
         log("  we *CAN'T* tell the Post's author's name because we flushed the cache.");
         log("fetching the author manually");
-        result = ORM.fetch(*post.author); AssertNoErrors();
+        result = ORM.fetch(*post.author); AssertResultOK();
         log("  now we know the Post's author's name: it's %", post.author.name);
     }
     log("testing generic SQL execution");
@@ -164,28 +177,51 @@ main :: () {
             count: int;
             max_modified: string;
         }
-        result, rows := ORM.execute(My_Selection, "SELECT COUNT(*) AS count, MAX(modified) AS max_modified FROM Post;"); AssertNoErrors();
+        result, rows := SQLite.exec(My_Selection, "SELECT COUNT(*) AS count, MAX(modified) AS max_modified FROM Post;"); AssertResultOK();
         log("My_Selection: %", rows);
     }{
-        Another_Selection :: struct {
-            count: int;
-            max_modified: int;
-        }
-        AUTHOR_ID :: 2;
-        result, rows := ORM.execute(Another_Selection, "SELECT COUNT(*), MAX(strftime(\"%s\", modified)) FROM Post WHERE author_id = ?;", AUTHOR_ID); AssertNoErrors();
-        log("Another_Selection: %", rows);
+        min_author_id := 2;
+        result, rows := SQLite.exec(
+            struct { author_name: string; top_level_post_count: int; latest_post_date: string; },
+            #string __SQL__
+SELECT
+    User.name                         AS author_name,
+    COUNT(*)                          AS top_level_post_count,
+    MAX(strftime("%s", Post.created)) AS latest_post_date
+
+FROM
+    Post
+
+LEFT JOIN
+    User
+ON
+    User.id = Post.author_id
+
+WHERE
+    author_id >= ?
+AND
+    parent_id IS NULL
+
+GROUP BY
+    author_id
+__SQL__,    /* 1 */min_author_id
+            ); AssertResultOK();
+        log("anonymous selection:");
+        for rows log("  %1\n    posts: %2\n    latest post date: %3",
+        /* 1 */it.author_name,
+        /* 2 */it.top_level_post_count,
+        /* 3 */it.latest_post_date
+        );
     }
-    ORM.fini();
     ORM.fini();
 }
 
-AssertNoErrors :: () #expand { assert(`result == .OK, "%: %", `result, SQL.errmsg()); }
+AssertResultOK :: () #expand { assert(`result == .OK, "%: %", `result, SQLite.errmsg()); }
 
 #import "Basic";
 
-SQL :: #import,dir "../../../SQLite"(USE_ORM=true, VERBOSE=true);
-ORM :: SQL.ORM;
+SQLite :: #import,dir "../../../SQLite"(USE_ORM=true, VERBOSE=true);
+ORM :: SQLite.ORM;
 
-#placeholder Database_Cache;
 #add_context db_cache: Database_Cache;
 
