@@ -21,20 +21,22 @@ fini()
 
 insert(obj)
     insert Model-"derived" object into the database
-update(obj)
-    save cached object changes to the database
+set(cached_obj, field_name, value)
+    set the given field of the given cached object to the given value & save
+update(cached_obj)
+    save the entire cached object to the database
 select_by_id(T, id)
     fetch a specific row by model and id number
 select_from(T, where, ..params, limit=0, offset=0)
     lookup an object in the database, save it to the cache, return a Cached(T)
     where, limit, and offset are optional, but must be constant
-delete(*obj)
+delete(*cached_obj)
     delete a cached database object from the database
 
-fetch(*obj)
+fetch(*cached_obj)
     fetch the object from the database
 
-is_fetched(obj)
+is_fetched(cached_obj)
     returns whether or not the object exists in the local database cache
 flush_cache()
     flush the local database cache
@@ -118,16 +120,21 @@ XX              );
         }
 
         result = Result.BUSY;
-        while result == .BUSY {
+        rows := 0;
+        while true {
             result = step(statement);
-            if result == .ROW {
-                obj.id       = column_int64(statement, 0);
-                obj.created  = column_int  (statement, 1);
-                obj.modified = obj.created;
-                continue;
+            ifx result == {
+                case .ROW;
+                    rows += 1;
+                    obj.id       = column_int64(statement, 0);
+                    obj.created  = column_int  (statement, 1);
+                    obj.modified = obj.created;
+                    continue;
+                case .DONE; break;
+                case; return result, .{};
             }
-            if result != .DONE then return result, .{};
         }
+        assert(rows == 1);
 
         #insert #run sprint(#string XX
         pointer := table_set(*context.db_cache._%, obj.id, obj);
@@ -138,6 +145,59 @@ XX,     /* 1 */T
         return result, .{obj.id, pointer};
     }
 
+    set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand {
+        SQL_STATEMENT :: #run sprint("UPDATE %1 SET %2 = ?, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
+            /* 1 */T.type,
+            /* 2 */field_name
+        ); //TODO: return modified
+
+        result, statement := prepare_v2(SQL_STATEMENT);
+        if result != .OK then return result;
+        
+        #insert -> string {
+            info := type_info(T2);
+            if info.type == {
+                case .BOOL; #through;
+                case .INTEGER;
+                    if type_info(T2).runtime_size <= 4
+                        return "result = bind(statement, 1, cast(s32) value);";
+                    else
+                        return "result = bind(statement, 1, cast(s64) value);";
+                case .FLOAT;
+                    return "result = bind(statement, 1, cast(float64) value);";
+                case .STRING;
+                    return "result = bind(statement, 1, cast( string) value);";
+            }
+            return "assert(false, \"unknown value type passed to set()\");";
+        }
+        if result != .OK then return result;
+
+        result = bind(statement, 2, cached_obj.id);
+        if result != .OK then return result;
+
+        result = Result.BUSY;
+        rows := 0;
+        while true {
+            result = step(statement);
+            ifx result == {
+                case .ROW;
+                    rows += 1;
+                    cached_obj.modified  = column_int(statement, 0);
+                    continue;
+                case .DONE; break;
+                case; return result;
+            }
+        }
+        assert(rows == 1);
+
+        #insert #run sprint(#string XX
+        cached_obj.%1 = value;
+XX,     /* 1 */field_name);
+
+        result = finalize(statement);
+        return result;
+    }
+
     update :: (cached_obj: $T/Cached) -> result: Result {
         SQL_STATEMENT :: #run -> string {
             sb_fields: String_Builder;
@@ -145,11 +205,11 @@ XX,     /* 1 */T
                 if it_index != 0 then append(*sb_fields, ", ");
                 append(*sb_fields, sprint("% = ?", it.name));
             }
-            return sprint("UPDATE %1 SET %2, modified = CURRENT_TIMESTAMP WHERE id = ?;",
+            return sprint("UPDATE %1 SET %2, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
             /* 1 */T.type,
             /* 2 */builder_to_string(*sb_fields)
             );
-        }
+        } //TODO: return modified
         INDEX_OF_ID_QUESTION_MARK :: #run serializable_members_of(T.type).count+1;
 
         result, statement := prepare_v2(SQL_STATEMENT);
@@ -178,10 +238,20 @@ XX,             );
         if result != .OK then return result;
 
         result = Result.BUSY;
-        while result == .BUSY {
+        rows := 0;
+        while true {
             result = step(statement);
-            if result != .DONE && result != .BUSY then return result;
+            ifx result == {
+                case .ROW;
+                    rows += 1;
+                    cached_obj.pointer.modified  = column_int(statement, 0);
+                    continue;
+                case .DONE; break;
+                case; return result;
+            }
         }
+        assert(rows == 1);
+
 
         result = finalize(statement);
         return result;

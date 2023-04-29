@@ -15,7 +15,7 @@ Post :: struct { using #as model: ORM.Model;
 
 main :: () {
     set_working_directory((#import "String").path_strip_filename((#import "System").get_path_of_running_executable()));
-    ORM.init("database.db");
+    ORM.init("database.db"); // omit the filename for an in-memory database
     result: SQL.Result;
     {
         user1, user2: ORM.Cached(User);
@@ -104,17 +104,27 @@ main :: () {
             }
         }
 
-        // one more time, just because this is cool:
+        log("here's a bunch of sample queries");
         ORM.select_from(Post, where="author_id = ?", user2.id);
         ORM.select_from(Post, where="author_id = ?", user2.id, limit=2);
         ORM.select_from(Post, where="author_id = ?", user2.id, limit=2, offset=2);
         ORM.select_from(Post, where="author_id = ?", user2.id,          offset=2);
         ORM.select_from(Post,                                  limit=2);
 
+        old_name := user2.name;
         new_name := "Robert";
         log("changing %'s name to %", user2.name, new_name);
         user2.name = new_name;
         result = ORM.update(user2); AssertNoErrors();
+        result = ORM.fetch(*user2); AssertNoErrors();
+        assert(user2.name == new_name);
+
+        log("but actually let's change it back now, a simpler way");
+        result = ORM.set(user2, "name", old_name); AssertNoErrors();
+        assert(user2.name == old_name);
+        log("and let's change his age too");
+        result = ORM.set(user2, "age", 47);
+        assert(user2.age == 47);
     }{
         post: ORM.Cached(Post);
         log("selecting the first Post");
@@ -141,7 +151,9 @@ AssertNoErrors :: () #expand { assert(`result == .OK, "%: %", `result, SQL.errms
 
 #import "Basic";
 
-SQL :: #import,dir "../../../SQLite"(VERBOSE=true);
+SQL :: #import,dir "../../../SQLite"(USE_ORM=true, VERBOSE=true);
 ORM :: SQL.ORM;
 
+#placeholder Database_Cache;
 #add_context db_cache: Database_Cache;
+
