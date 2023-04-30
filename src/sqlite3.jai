@@ -1217,4 +1217,4 @@ SQLITE_ROW        :: 100;  /* sqlite3_step() has another row ready */
 SQLITE_DONE       :: 101;  /* sqlite3_step() has finished executing */
 
 
-sqlite :: #library "sqlite3";
+sqlite :: #library "../lib/sqlite3";

@@ -1,9 +1,10 @@
 prebuild_step :: (w: Workspace) {
     options := get_build_options(w);
     DLL_NAME :: "sqlite3.dll";
+    dll_\    source := sprint("%1../lib/%2", #filepath, DLL_NAME);
     dll_destination := sprint("%1/%2", options.output_path, DLL_NAME);
     (#import "File").make_directory_if_it_does_not_exist("bin");
-    if !file_exists(dll_destination) then copy_file(sprint("%1%2", #filepath, DLL_NAME), dll_destination);
+    if !file_exists(dll_destination) then copy_file(dll_source, dll_destination);
     array_reset(*model_names);
 }
 
@@ -51,21 +52,30 @@ XX,                         /* 1 */it.name,
                             sql_type: string;
                             if it.type.type == {
                                 case .BOOL; #through;
+                                case .ENUM; #through;
                                 case .INTEGER; sql_type="INTEGER";
                                 case .FLOAT;   sql_type="REAL";
                                 case .STRING;  sql_type="TEXT";
                             }
                             print_to_builder(*sb_table, #string XX
-,%1 %2
+,%1 %2%3
 XX,                         /* 1 */it.name,
-                            /* 2 */sql_type
+                            /* 2 */sql_type,
+                            /* 3 */" NOT NULL" //TODO: optional nullability
                             );
                         }
+                    }
+                    strict_table := STRICT_TABLES;
+                    for code_struct.defined_type.notes {
+                        if it == "strict" { strict_table = true; break; }
+                        found, key, value := split_from_left(it, #char "=");
+                        if !found continue;
+                        if key == "strict" && value != "true" && value != "" { strict_table = true; break; }
                     }
                     append(*sb_table, builder_to_string(*sb_fk));
                     print_to_builder(*sb_table, #string XX
 )%1;
-XX,                 /* 1 */ifx STRICT_TABLES then " STRICT");
+XX,                 /* 1 */ifx strict_table then " STRICT");
                     array_add(*table_schemas, trim(builder_to_string(*sb_table), " \t\n"));
                 }
             }

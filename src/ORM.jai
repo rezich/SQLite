@@ -103,10 +103,9 @@ ORM :: struct {
                 print_to_builder(*sb, ifx member_is_foreign_key(it) then #string XX
         result = ifx obj.%2.fetch_id == 0 then bind(statement, %1) else bind(statement, %1, obj.%2.fetch_id);
 XX              else #string XX
-        result = bind(statement, %1, %3obj.%2);
+        result = bind(statement, %1, obj.%2);
 XX,             /* 1 */question_mark_index,
-                /* 2 */it.name,
-                /* 3 */get_sqlite_cast_string_for_model_member(it)
+                /* 2 */it.name
                 );
                 append(*sb, #string XX
         if result != .OK then return result, .{};
@@ -157,6 +156,8 @@ XX,             /* 1 */T
         VALUE_IS_A_CACHED_STRUCT :: #run type_info(T2).type == .STRUCT && (cast(*Type_Info_Struct) type_info(T2)).name == "Cached";
         #if VALUE_IS_A_CACHED_STRUCT
             result = bind(statement, 1, value.fetch_id);
+        else #if #run type_info(T2).type == .ENUM then
+            result = bind(statement, 1, cast(s64) value);
         else
             result = bind(statement, 1, value);
         if result != .OK then return result;
@@ -208,12 +209,11 @@ XX,     /* 1 */ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0,
             for serializable_members_of(T.type) {
                 question_mark_index := it_index + 1;
                 print_to_builder(*sb, ifx member_is_foreign_key(it) then #string XX
-        result = ifx %2cached_obj.fetch_id == 0 then bind(statment, %1) else bind(statement, %1, %2cached_obj.%3);
+        result = ifx cached_obj.fetch_id == 0 then bind(statment, %1) else bind(statement, %1, cached_obj.%2);
 XX              else #string XX
-        result = bind(statement, %1, %2cached_obj.%3);
+        result = bind(statement, %1, cached_obj.%2);
 XX,             /* 1 */question_mark_index,
-                /* 2 */get_sqlite_cast_string_for_model_member(it),
-                /* 3 */it.name
+                /* 2 */it.name
                 );
                 append(*sb, #string XX
         if result != .OK then return result;
@@ -284,6 +284,7 @@ XX,             );
         for params {
             if it.type.type == {
                 case .BOOL; #through;
+                case .ENUM; #through;
                 case .INTEGER;
                     if it.type.runtime_size <= 4
                         result = bind(statement, param_number, <<cast(*s32) it.value_pointer);
@@ -351,10 +352,6 @@ XX,     /* 1 */T.type);
     }
 
     is_a_model :: inline x => (#import "Compiler").is_subclass_of(cast(*Type_Info) x, "Model");
-
-    get_sqlite_cast_string_for_model_member :: (info: Type_Info_Struct_Member) -> string {
-        return ifx info.type.type == .BOOL then " cast(int)";
-    }
 
     field_is_foreign_key :: ($type: Type, $field_name: string) -> bool {
         for serializable_members_of(type) if it.name == field_name return member_is_foreign_key(it);

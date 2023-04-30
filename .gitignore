@@ -6,7 +6,10 @@
 *.db
 *.db-shm
 *.db-wal
+*.dll
 !lib/**/*.dll
+*.lib
+!lib/**/*.lib
 .vs
 *.rdbg
 example/bin

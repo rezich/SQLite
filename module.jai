@@ -7,6 +7,8 @@
     MAKE_MIGRATIONS  := false  // (ORM) work in progress
 );
 
+#if MAKE_MIGRATIONS && !FROM_METAPROGRAM then #assert false "MAKE_MIGRATIONS only works from the metaprogram.";
+
 #if !ONLY_C_BINDINGS {                           #load "src/SQLite.jai";
     #if FROM_METAPROGRAM                    then #load "src/Meta.jai";
     #if FROM_METAPROGRAM && MAKE_MIGRATIONS then #load "src/Migrator.jai";

@@ -63,8 +63,8 @@ ORM
 ---
 
 You can also `#import "SQLite"(USE_ORM=true);`, which, if you've set up your metaprogram correctly
-(see [the example](example/)), allows you to more easily create Jai structs that can automatically
-interface with SQLite, like this:
+(see [the “overview” example](examples/overview)), allows you to more easily create Jai structs that
+can automatically interface with SQLite, like this:
 
 ```jai
 using SQLite.ORM;
@@ -77,11 +77,11 @@ My_Struct :: struct { using model: Model;
     real: float;
     big_real: float64;
     other: Cached(My_Other_Struct);
-    private: int; @no_serialize
+    private: int; @do_not_serialize;
 }
 ```
 
-All of the members in the above struct, except for the last one, will be automatically de/serialized
+All of the members in the above struct--except for the last one--will be automatically de/serialized
 to/from your SQLite database, when using [the ORM procedures](src/ORM.jai).
 
 `Cached(My_Other_Struct)` is used for foreign-key references. in the example above, `other` will
@@ -92,8 +92,9 @@ There's no need to include your own ID member, as that's included for you in `Mo
 `created` and `modified` timestamps. (The timestamps are all handled in SQLite, and, for now,
 returned to you in Jai as UNIX timestamps.)
 
-See [the example](example/) for a sample use of this module. note that [example.jai](example/example.jai)
-contains the metaprogram, and [src/Main.jai](example/src/Main.jai) contains the actual program.
+See [the “overview” example](examples/overview) for a sample use of this module. note that [overview.jai](examples/overview/overview.jai)
+contains the metaprogram, and [src/Main.jai](examples/overview/src/Main.jai) contains the actual
+program.
 
 **There is no automatic lazy-loading** or anything like that; if you retrieve a `My_Struct` row from
 the database, it won't load the associated `My_Other_Struct` into `other` for you. Instead, you must
@@ -113,12 +114,12 @@ TODO
 ====
 
  - more compile-time checking of things to make usage more pleasant, e.g. help the user if they forget to `#as` the `using #as model: Model;` in their models
- - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`...?
- - `set(T, field_name, value, where, ..params)`
- - `delete_from(T, where, ..params)`
- - `insert(objs)`
+ - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`/...? `ORM.Nullable(T)`...? ...?
+ - `ORM.set(T, field_name, value, where, ..params)`
+ - `ORM.delete_from(T, where, ..params)`
+ - `ORM.insert(objs)`
  - (...)
- - some way of doing `operator ==` with `Cached(T)`s
+ - some way of doing `operator ==` with `ORM.Cached(T)`s
  - maybe just huck the SQLite error message into the `context`?
  - maybe have the wrapper functions return enums that are subsets of `Result`? (`#must`...?)
  - more generally, figure out if there's a more ergonomic way to handle SQLite result and/or error passing

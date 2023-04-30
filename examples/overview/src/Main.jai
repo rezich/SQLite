@@ -7,7 +7,7 @@ User :: struct { using #as model: ORM.Model;
     something_else: string; @do_not_serialize
 }
 
-Post :: struct { using #as model: ORM.Model;
+Post :: struct @strict { using #as model: ORM.Model;
     body: string;
     author: ORM.Cached(User); @on_delete=CASCADE
     parent: ORM.Cached(Post); @on_delete=CASCADE
@@ -52,7 +52,7 @@ main :: () {
             result, post := ORM.insert(Post.{
                 body="Remembered post",
                 author=user2
-            });
+            }); AssertResultOK();
             remembered_post_id = post.id;
         }
 
@@ -132,11 +132,11 @@ main :: () {
         }
 
         log("here's a bunch of sample queries");
-        ORM.select_from(Post, where="author_id = ?", user2.id);
-        ORM.select_from(Post, where="author_id = ?", user2.id, limit=2);
-        ORM.select_from(Post, where="author_id = ?", user2.id, limit=2, offset=2);
-        ORM.select_from(Post, where="author_id = ?", user2.id,          offset=2);
-        ORM.select_from(Post,                                  limit=2);
+        ORM.select_from(Post, where="author_id = ?", user2.id);                    AssertResultOK();
+        ORM.select_from(Post, where="author_id = ?", user2.id, limit=2);           AssertResultOK();
+        ORM.select_from(Post, where="author_id = ?", user2.id, limit=2, offset=2); AssertResultOK();
+        ORM.select_from(Post, where="author_id = ?", user2.id,          offset=2); AssertResultOK();
+        ORM.select_from(Post,                                  limit=2);           AssertResultOK();
 
         old_name := user2.name;
         new_name := "Robert";
@@ -244,7 +244,7 @@ AssertResultOK :: () #expand { assert(`result == .OK, "%: %", `result, SQLite.er
 
 #import "Basic";
 
-SQLite :: #import,dir "../../../SQLite"(USE_ORM=true, VERBOSE=true);
+SQLite :: #import,dir "../../../../SQLite"(USE_ORM=true, VERBOSE=true);
 ORM :: SQLite.ORM;
 
 #add_context db_cache: Database_Cache;

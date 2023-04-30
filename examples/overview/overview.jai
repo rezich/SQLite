@@ -1,9 +1,9 @@
-OUTPUT_NAME :: "example";
+OUTPUT_NAME :: "overview";
 OUTPUT_PATH :: "bin";
 ENTRY_POINT :: "src/Main.jai";
 
 #run {
-    w := compiler_create_workspace("Actual program");
+    w := compiler_create_workspace(OUTPUT_NAME);
     if !w { print("Workspace creation failed.\n"); return; }
 
     options := get_build_options(w);
@@ -29,4 +29,4 @@ ENTRY_POINT :: "src/Main.jai";
 
 #import "Basic";
 #import "Compiler";
-SQL :: #import,dir "../../SQLite"(FROM_METAPROGRAM=true);
+SQL :: #import,dir "../../../SQLite"(FROM_METAPROGRAM=true);

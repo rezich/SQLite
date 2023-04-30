@@ -74,7 +74,9 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_
     for params {
         if it.type.type == {
             case .BOOL;
-                result = bind(statement, param_number, <<cast(*bool) it.value_pointer);
+                result = bind(statement, param_number,    <<cast(*bool) it.value_pointer);
+            case .ENUM;
+                result = bind(statement, param_number,    <<cast( *s64) it.value_pointer);
             case .INTEGER;
                 if it.type.runtime_size <= 4
                     result = bind(statement, param_number, <<cast(*s32) it.value_pointer);
@@ -170,6 +172,12 @@ bind :: (statement: Statement, index: s32, value: bool) -> Result {
     #if VERBOSE then verbose_bind(value);
     return cast(Result) sqlite3_bind_int(statement, index, xx ifx value then 1);
 }
+bind :: (statement: Statement, index: s32, value: $T) -> Result #modify {
+    return (cast(*Type_Info) T).type == .ENUM;
+} {
+    #if VERBOSE then verbose_bind(value);
+    return cast(Result) sqlite3_bind_int(statement, index, xx ifx value then 1);
+}
 
 #scope_module
 
@@ -187,8 +195,7 @@ count_question_marks :: (sql: string) -> int {
 }
 
 serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member {
-    members := serializable_members_of(cast(*Type_Info_Struct) type_info(type));
-    return members;
+    return serializable_members_of(cast(*Type_Info_Struct) type_info(type));
 }
 
 serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Member {
@@ -198,14 +205,17 @@ serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Me
     for info.members {
         is_a_valid_type :=
             it.type.type == .BOOL    ||
+            it.type.type == .ENUM    ||
             it.type.type == .INTEGER ||
             it.type.type == .FLOAT   ||
             it.type.type == .STRING;
         #if USE_ORM || FROM_METAPROGRAM { if ORM.is_a_model(info) && ORM.member_is_foreign_key(it) then is_a_valid_type = true; }
         if !is_a_valid_type then continue;
-        has_do_not_serialize_note := false;
-        #if USE_ORM || FROM_METAPROGRAM { for it.notes if it == NOTE_DO_NOT_SERIALIZE { has_do_not_serialize_note = true; break; } }
-        if has_do_not_serialize_note then continue;
+        #if USE_ORM || FROM_METAPROGRAM {
+            has_do_not_serialize_note := false;
+            for it.notes if it == NOTE_DO_NOT_SERIALIZE { has_do_not_serialize_note = true; break; }
+            if has_do_not_serialize_note then continue;
+        }
         array_add(*members, it);
     }
     return members;
@@ -249,6 +259,11 @@ XX,         /* 1 */it.name,
 XX,             /* 1 */it.name,
                 /* 2 */column_number
                 );
+                case .ENUM; print_to_builder(*sb, #string XX
+    obj.%1 = xx column_int64(statement, %2);
+XX,             /* 1 */it.name,
+                /* 2 */column_number
+                );
                 case .INTEGER; print_to_builder(*sb, #string XX
     obj.%1 = column_int%3(statement, %2);
 XX,             /* 1 */it.name,
@@ -287,12 +302,10 @@ XX,             /* 1 */it.name,
     verbose_begin :: (statement: string) { context.sqlite_verbose.statement = statement; }
     verbose_bind :: (param: $T) {
         using context.sqlite_verbose;
-        ifx type_info(T).type == {
-            case .POINTER; parameters[parameter_count] = "NULL";
-            case .STRING;  parameters[parameter_count] = tprint("\"%\"", param);
-            case .BOOL;    parameters[parameter_count] = tprint("%", ifx param then 1);
-            case;          parameters[parameter_count] = tprint("%", param);
-        }
+        #if #run type_info(T).type == .ENUM    then parameters[parameter_count] = tprint("% [%]", cast,force(s64) param, param); else
+        #if #run type_info(T).type == .POINTER then parameters[parameter_count] = "NULL"; else
+        #if #run type_info(T).type == .BOOL    then parameters[parameter_count] = tprint("% [%]", ifx param then 1, ifx param then "TRUE" else "FALSE"); else
+                                                    parameters[parameter_count] = tprint("%", param);
         parameter_count += 1;
     }
     verbose_end :: () {
