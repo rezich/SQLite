@@ -76,7 +76,7 @@ main :: () {
             body="Parent Post",
             author=user1
         }); AssertResultOK();
-        log("  post id % will be the parent", parent_post.id);
+        log("  Post id % will be the parent", parent_post.id);
 
         log("inserting another Post, with the previous Post as its parent");
         result, child_post = ORM.insert(Post.{
@@ -150,11 +150,27 @@ main :: () {
         result = ORM.set(user2, "name", old_name); AssertResultOK();
         assert(user2.name == old_name);
         log("and let's change his age too");
-        result = ORM.set(user2, "age", 47);
+        result = ORM.set(user2, "age", 47); AssertResultOK();
+        //result = ORM.set(user2, "age", "forty-seven"); AssertResultOK(); // uncomment this to see a compile-time error
+        //result = ORM.set(user2, "age", null); AssertResultOK(); // this should work soon, provided age is not NOT NULL
         assert(user2.age == 47);
     }{
+        post, next_post: ORM.Cached(Post);
+        log("selecting the Post we remembered way earlier");
+        result, post = ORM.select_by_id(Post, remembered_post_id+1); AssertResultOK();
+        log("and the one after it");
+        result, next_post = ORM.select_by_id(Post, remembered_post_id+1); AssertResultOK();
+        log("setting the second Post's parent to the first Post");
+        result = ORM.set(next_post, "parent", post); AssertResultOK();
+        assert(next_post.parent.fetch_id == post.fetch_id && next_post.parent.pointer == post.pointer);
+        log("setting it back to NULL (parent and parent_id are interchangable here)");
+        result = ORM.set(next_post, "parent_id", null); AssertResultOK();
+        log("you can also leave off the value parameter to NULL it; that works too");
+        result = ORM.set(next_post, "parent"); AssertResultOK();
+        assert(next_post.parent.fetch_id == 0 && next_post.parent.pointer == null);
+    }{
         post: ORM.Cached(Post);
-        log("selecting the post we remembered way earlier");
+        log("selecting the Post we remembered way earlier");
         result, post = ORM.select_by_id(Post, remembered_post_id); AssertResultOK();
         assert(ORM.is_fetched(post.author));
         log("  we can tell the Post's author's name is % because it's still in the cache.", post.author.name);
@@ -163,7 +179,7 @@ main :: () {
     ORM.flush_cache();
     {
         post: ORM.Cached(Post);
-        log("selecting the post we remembered way earlier");
+        log("selecting the Post we remembered way earlier");
         result, post = ORM.select_by_id(Post, remembered_post_id); AssertResultOK();
         assert(!ORM.is_fetched(post.author));
         log("  we *CAN'T* tell the Post's author's name because we flushed the cache.");
@@ -179,39 +195,47 @@ main :: () {
         }
         result, rows := SQLite.exec(My_Selection, "SELECT COUNT(*) AS count, MAX(modified) AS max_modified FROM Post;"); AssertResultOK();
         log("My_Selection: %", rows);
-    }{
-        min_author_id := 2;
-        result, rows := SQLite.exec(
-            struct { author_name: string; top_level_post_count: int; latest_post_date: string; },
-            #string __SQL__
+    }
+    BIG_OL_QUERY :: #string __SQL__
 SELECT
     User.name                         AS author_name,
     COUNT(*)                          AS top_level_post_count,
     MAX(strftime("%s", Post.created)) AS latest_post_date
-
-FROM
-    Post
-
-LEFT JOIN
-    User
-ON
-    User.id = Post.author_id
-
+FROM Post
+LEFT JOIN User ON User.id = Post.author_id
 WHERE
-    author_id >= ?
-AND
+    author_id >= ? AND
     parent_id IS NULL
-
-GROUP BY
-    author_id
-__SQL__,    /* 1 */min_author_id
-            ); AssertResultOK();
-        log("anonymous selection:");
+GROUP BY author_id
+__SQL__;
+    min_author_id := 2;
+    {
+        log("testing generic SQL execution with an anonymous struct");
+        result, rows := SQLite.exec(
+            struct { author_name: string; top_level_post_count: int; latest_post_date: string; },
+            BIG_OL_QUERY,
+            min_author_id
+        ); AssertResultOK();
         for rows log("  %1\n    posts: %2\n    latest post date: %3",
         /* 1 */it.author_name,
         /* 2 */it.top_level_post_count,
         /* 3 */it.latest_post_date
         );
+    } #if false { // remove #if false to see a runtime error
+        result, rows := SQLite.exec(
+            struct { blauthor_name: string; blop_level_post_count: int; blatest_post_date: string; },
+            BIG_OL_QUERY,
+            min_author_id
+        ); AssertResultOK();
+    } {
+        log("no runtime error here because check_column_names=false");
+        result, rows := SQLite.exec(
+            struct { blauthor_name: string; blop_level_post_count: int; blatest_post_date: string; },
+            BIG_OL_QUERY,
+            min_author_id,
+            check_column_names=false
+        ); AssertResultOK();
+        
     }
     ORM.fini();
 }

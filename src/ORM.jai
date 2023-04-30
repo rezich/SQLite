@@ -27,7 +27,7 @@ update(cached_obj)
     save the entire cached object to the database
 select_by_id(T, id)
     fetch a specific row by model and id number
-select_from(T, where, ..params, limit=0, offset=0)
+select_from(T, where, ..params, limit=0, offset=0, allocator=temp)
     lookup an object in the database, save it to the cache, return a Cached(T)
     where, limit, and offset are optional, but must be constant
 delete(*cached_obj)
@@ -141,33 +141,24 @@ XX,             /* 1 */T
         return result, .{new_obj.id, new_obj};
     }
 
+    set :: (cached_obj: $T/Cached, $field_name: string) -> result: Result #expand { return set(cached_obj, field_name, null); }
     set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand { // wish this didn't have to be #expand...
-        SQL_STATEMENT :: #run sprint("UPDATE %1 SET %2 = ?, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
+        SQL_STATEMENT :: #run sprint("UPDATE %1 SET %2%3 = ?, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
             /* 1 */T.type,
-            /* 2 */field_name
+            /* 2 */field_name,
+            /* 3 */ifx #run field_is_foreign_key(T.type, field_name) && !ends_with(field_name, "_id") then "_id"
         );
+
+        #if #run type_info(T2).type == .POINTER then assert(value == null);
 
         result, statement := prepare_v2(SQL_STATEMENT);
         if result != .OK then return result;
-        
-        #insert -> string {
-            info := type_info(T2);
-            if info.type == {
-                case .BOOL; return #string XX
-        result = bind(statement, 1, value);
-XX;             case .INTEGER;
-                    if type_info(T2).runtime_size <= 4 then return #string XX
-        result = bind(statement, 1, cast(s32) value);
-XX;                 else return #string XX
-        result = bind(statement, 1, cast(s64) value);
-XX;             case .FLOAT; return #string XX
-        result = bind(statement, 1, cast(float64) value);
-XX;             case .STRING; return #string XX
-        result = bind(statement, 1, cast( string) value);
-XX;         }
-            return #string XX
-        assert(false, "unknown value type passed to set()");
-XX;     }
+
+        VALUE_IS_A_CACHED_STRUCT :: #run type_info(T2).type == .STRUCT && (cast(*Type_Info_Struct) type_info(T2)).name == "Cached";
+        #if VALUE_IS_A_CACHED_STRUCT
+            result = bind(statement, 1, value.fetch_id);
+        else
+            result = bind(statement, 1, value);
         if result != .OK then return result;
 
         result = bind(statement, 2, cached_obj.id);
@@ -185,9 +176,11 @@ XX;     }
         }}
         assert(rows == 1);
 
-        #insert #run sprint(#string XX
+        #insert #run sprint(ifx #run type_info(T2).type == .POINTER then #string XX
+        cached_obj.%1 = .{};
+XX          else #string XX
         cached_obj.%1 = value;
-XX,     /* 1 */field_name);
+XX,     /* 1 */ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0, field_name.count-3) else field_name);
 
         result = finalize(statement);
         return result;
@@ -249,49 +242,22 @@ XX,             );
         return result;
     }
 
-    // update :: ($type: Type, set: string, where: string)
+    // update :: ($type: Type, set: string, where: string, ..params: Any)
 
     select_by_id :: ($type: Type, id: s64) -> result: Result, obj: Cached(type) #modify { return is_a_model(type); } {
-        SQL_STATEMENT :: #run -> string {
-            sb: String_Builder;
-            for serializable_members_of(type) {
-                if it_index != 0 then append(*sb, ", ");
-                append(*sb, it.name);
-                if member_is_foreign_key(it) then append(*sb, "_id");
-            }
-            return sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2 WHERE id = ?;",
-            /* 1 */builder_to_string(*sb),
-            /* 2 */type
-            );
-        }
-
-        result, statement := prepare_v2(SQL_STATEMENT);
-        if result != .OK then return result, .{};
-
-        result = bind(statement, 1, id);
-        if result != .OK then return result, .{};
-
-        obj: type;
-
-        rows := 0;
-        while true { result = step(statement); ifx result == {
-            case .ROW; rows += 1; fetch_row(*obj, statement); continue;
-            case .BUSY; continue;
-            case .DONE; break;
-            case;       return result, .{};
-        }}
-        assert(rows == 1);
-
-        #insert #run sprint(#string XX
-        pointer := table_set(*context.db_cache._%1, obj.id, obj);
-XX,     /* 1 */type);
-
-        result = finalize(statement);
-        return result, .{obj.id, pointer};
+        result, rows := select_from(type, where="id = ?", id);
+        defer array_free(rows);
+        if rows.count == 0 then return result, .{};
+        return result, rows[0];
     }
 
-    select_from :: ($type: Type, $where := "", params: ..Any, $limit := 0, $offset := 0) -> result: Result, rows: [..] Cached(type) {
-        assert(is_a_model(type));
+    select_from :: ($type: Type, $where := "", params: ..Any, $limit := 0, $offset := 0, allocator := temp) -> result: Result, rows: [..] Cached(type) #modify { return is_a_model(type); } {
+        assert(is_a_model(type), "type must using #as a Model");
+        assert(params.count == count_question_marks(where), "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
+        /* 1 */params.count,
+        /* 2 */count_question_marks(where)
+        );
+
         SQL_STATEMENT :: #run -> string {
             sb: String_Builder;
             for serializable_members_of(type) {
@@ -309,6 +275,7 @@ XX,     /* 1 */type);
         }
 
         rows: [..] Cached(type);
+        rows.allocator = allocator;
 
         result, statement := prepare_v2(SQL_STATEMENT);
         if result != .OK then return result, rows;
@@ -374,7 +341,7 @@ XX,     /* 1 */T.type);
         return result;
     }
 
-    // delete_from :: ($type: Type, where: string)
+    // delete_from :: ($type: Type, where: string, ..params: Any)
 
     fetch :: (cached: *$T/Cached) -> result: Result {
         assert(cached.fetch_id != 0);
@@ -389,6 +356,11 @@ XX,     /* 1 */T.type);
         return ifx info.type.type == .BOOL then " cast(int)";
     }
 
+    field_is_foreign_key :: ($type: Type, $field_name: string) -> bool {
+        for serializable_members_of(type) if it.name == field_name return member_is_foreign_key(it);
+        return false;
+    }
+
     member_is_foreign_key :: (member: Type_Info_Struct_Member) -> bool {
         return member.type.type == .STRUCT && (cast(*Type_Info_Struct) member.type).name == "Cached";
     }
@@ -398,8 +370,8 @@ XX,     /* 1 */T.type);
         return (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_info.constant_storage[member_info.specified_parameters[0].offset_into_constant_storage]).name; // thanks, shwa!
     }
 
-    is_fetched :: (using cached: $T/Cached) -> bool { return pointer != null; }
-    is_null    :: (using cached: $T/Cached) -> bool { return fetch_id == 0;   }
+    is_fetched :: inline (using cached: $T/Cached) -> bool { return pointer != null; }
+    is_null    :: inline (using cached: $T/Cached) -> bool { return fetch_id == 0;   }
 
     flush_cache :: () #expand { `__flush_database_cache(); } // :P
 

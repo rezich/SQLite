@@ -58,9 +58,12 @@ exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> 
 }
 // this version of exec is not actually SQLite's exec,
 // but it does the same thing, i.e. build a statement & execute it.
-exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp) -> result: Result, selected: [..] row_type {
-    //TODO: ensure that the parameter count is correct, at least
-    //TODO: probably also (optionally) check column names
+exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_column_names := true) -> result: Result, selected: [..] row_type {
+    assert(params.count == count_question_marks(sql), "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
+    /* 1 */params.count,
+    /* 2 */count_question_marks(sql)
+    );
+
     rows: [..] row_type;
     rows.allocator = allocator;
 
@@ -88,7 +91,7 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp) -> resu
 
     while true { result = step(statement); if result == {
         case .ROW;
-            fetch_row(array_add(*rows), statement);
+            fetch_row(array_add(*rows), statement, check_column_names);
             continue;
         case .BUSY; continue;
         case .DONE; break;
@@ -124,8 +127,10 @@ column_int64 :: (statement: Statement, column_number: s32) -> s64 {
     return sqlite3_column_int64(statement, column_number);
 }
 column_text :: (statement: Statement, column_number: s32) -> string {
-    text_cstring := cast(*u8) sqlite3_column_text(statement, column_number);
-    return copy_temporary_string(to_string(text_cstring));
+    return copy_temporary_string(to_string(cast(*u8) sqlite3_column_text(statement, column_number)));
+}
+column_name :: (statement: Statement, column_number: s32) -> string {
+    return copy_temporary_string(to_string(cast(*u8) sqlite3_column_name(statement, column_number)));
 }
 column_type :: (statement: Statement, column_number: s32) -> enum { INTEGER; FLOAT; BLOB; NULL; TEXT; } {
     return xx sqlite3_column_name(statement, column_number);
@@ -168,8 +173,21 @@ bind :: (statement: Statement, index: s32, value: bool) -> Result {
 
 #scope_module
 
+// this cuts down on code generation
+bind :: inline (statement: Statement, index: s32, $$value: *void) -> Result { assert(value == null); return bind(statement, index); }
+
+count_question_marks :: (sql: string) -> int {
+    question_marks := 0;
+    cursor := find_index_from_left(sql, #char "?");
+    while cursor != -1 {
+        question_marks += 1;
+        cursor = find_index_from_left(sql, #char "?", cursor+1);
+    }
+    return question_marks;
+}
+
 serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member {
-    members := serializable_members_of(type_info(type));
+    members := serializable_members_of(cast(*Type_Info_Struct) type_info(type));
     return members;
 }
 
@@ -193,7 +211,7 @@ serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Me
     return members;
 }
 
-fetch_row :: (obj: *$T, statement: Statement) {
+fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
     #if (USE_ORM || FROM_METAPROGRAM) && #run ORM.is_a_model(T) {
         obj.id       = column_int64(statement, 0);
         obj.created  = column_int  (statement, 1);
@@ -205,6 +223,16 @@ fetch_row :: (obj: *$T, statement: Statement) {
         #if (USE_ORM || FROM_METAPROGRAM) && #run ORM.is_a_model(T) then column_number = ORM.INTERNAL_COLUMN_COUNT;
         for serializable_members_of(T) {
             handled := false;
+            #if check_column_names then print_to_builder(*sb, #string XX
+    {
+        database_column_name := column_name(statement, %1);
+        MEMBER_NAME :: "%2";
+        assert(database_column_name == "" || database_column_name == MEMBER_NAME, "Column name mismatch; expected %%1, got %%2",
+    /* 1 */database_column_name,
+    /* 2 */MEMBER_NAME);
+    }
+XX,         /* 1 */column_number,
+            /* 2 */it.name);
             #if USE_ORM || FROM_METAPROGRAM then if ORM.member_is_foreign_key(it) then { print_to_builder(*sb, #string XX
     {
         id := column_int64(statement, %2);
@@ -214,8 +242,7 @@ fetch_row :: (obj: *$T, statement: Statement) {
 XX,         /* 1 */it.name,
             /* 2 */column_number,
             /* 3 */ORM.get_foreign_key_name_from(it, sprint("%", T))
-            ); handled = true;
-            }
+            ); handled = true; }
             if !handled then if it.type.type == {
                 case .BOOL; print_to_builder(*sb, #string XX
     obj.%1 = cast(bool) column_int(statement, %2);
