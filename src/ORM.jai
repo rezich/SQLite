@@ -87,9 +87,9 @@ ORM :: struct {
                 append(*sb_question_marks, "?");
             }
             return sprint("INSERT INTO %1(%2) VALUES (%3) RETURNING id, strftime(\"%%s\", created);",
-            /* 1 */T,
-            /* 2 */builder_to_string(*sb_values),
-            /* 3 */builder_to_string(*sb_question_marks)
+            /* 1 */ T,
+            /* 2 */ builder_to_string(*sb_values),
+            /* 3 */ builder_to_string(*sb_question_marks)
             );
         }
 
@@ -104,8 +104,8 @@ ORM :: struct {
         result = ifx obj.%2.fetch_id == 0 then bind(statement, %1) else bind(statement, %1, obj.%2.fetch_id);
 XX              else #string XX
         result = bind(statement, %1, obj.%2);
-XX,             /* 1 */question_mark_index,
-                /* 2 */it.name
+XX,             /* 1 */ question_mark_index,
+                /* 2 */ it.name
                 );
                 append(*sb, #string XX
         if result != .OK then return result, .{};
@@ -124,7 +124,7 @@ XX              );
                 id := column_int64(statement, 0);
                 #insert #run sprint(#string XX
                 new_obj = table_set(*context.db_cache._%, id, obj);
-XX,             /* 1 */T
+XX,             /* 1 */ T
                 );
                 new_obj.id = id;
                 new_obj.created  = column_int(statement, 1);
@@ -143,9 +143,9 @@ XX,             /* 1 */T
     set :: (cached_obj: $T/Cached, $field_name: string) -> result: Result #expand { return set(cached_obj, field_name, null); }
     set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand { // wish this didn't have to be #expand...
         SQL_STATEMENT :: #run sprint("UPDATE %1 SET %2%3 = ?, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
-            /* 1 */T.type,
-            /* 2 */field_name,
-            /* 3 */ifx #run field_is_foreign_key(T.type, field_name) && !ends_with(field_name, "_id") then "_id"
+            /* 1 */ T.type,
+            /* 2 */ field_name,
+            /* 3 */ ifx #run field_is_foreign_key(T.type, field_name) && !ends_with(field_name, "_id") then "_id"
         );
 
         #if #run type_info(T2).type == .POINTER then assert(value == null);
@@ -178,7 +178,7 @@ XX,             /* 1 */T
         cached_obj.%1 = .{};
 XX          else #string XX
         cached_obj.%1 = value;
-XX,     /* 1 */ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0, field_name.count-3) else field_name);
+XX,     /* 1 */ ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0, field_name.count-3) else field_name);
 
         result = finalize(statement);
         return result;
@@ -192,8 +192,8 @@ XX,     /* 1 */ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0,
                 append(*sb_fields, sprint("% = ?", it.name));
             }
             return sprint("UPDATE %1 SET %2, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
-            /* 1 */T.type,
-            /* 2 */builder_to_string(*sb_fields)
+            /* 1 */ T.type,
+            /* 2 */ builder_to_string(*sb_fields)
             );
         }
         INDEX_OF_ID_QUESTION_MARK :: #run serializable_members_of(T.type).count+1;
@@ -209,8 +209,8 @@ XX,     /* 1 */ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0,
         result = ifx cached_obj.fetch_id == 0 then bind(statment, %1) else bind(statement, %1, cached_obj.%2);
 XX              else #string XX
         result = bind(statement, %1, cached_obj.%2);
-XX,             /* 1 */question_mark_index,
-                /* 2 */it.name
+XX,             /* 1 */ question_mark_index,
+                /* 2 */ it.name
                 );
                 append(*sb, #string XX
         if result != .OK then return result;
@@ -250,10 +250,6 @@ XX,             );
 
     select_from :: ($type: Type, $where := "", params: ..Any, $limit := 0, $offset := 0, allocator := temp) -> result: Result, rows: [..] Cached(type) #modify { return is_a_model(type); } {
         assert(is_a_model(type), "type must using #as a Model");
-        assert(params.count == count_question_marks(where), "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
-        /* 1 */params.count,
-        /* 2 */count_question_marks(where)
-        );
 
         SQL_STATEMENT :: #run -> string {
             sb: String_Builder;
@@ -263,11 +259,11 @@ XX,             );
                 if member_is_foreign_key(it) then append(*sb, "_id");
             }
             return sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2 WHERE %3%4%5;",
-            /* 1 */builder_to_string(*sb),
-            /* 2 */type,
-            /* 3 */where,
-            /* 4 */ifx limit  then sprint(" LIMIT %" , limit ),
-            /* 5 */ifx offset then sprint(" OFFSET %", offset)
+            /* 1 */ builder_to_string(*sb),
+            /* 2 */ type,
+            /* 3 */ where,
+            /* 4 */ ifx limit  then sprint(" LIMIT %" , limit ),
+            /* 5 */ ifx offset then sprint(" OFFSET %", offset)
             );
         }
 
@@ -276,6 +272,12 @@ XX,             );
 
         result, statement := prepare_v2(SQL_STATEMENT);
         if result != .OK then return result, rows;
+
+        parameter_count := bind_parameter_count(statement);
+        assert(params.count == parameter_count, "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
+        /* 1 */ params.count,
+        /* 2 */ parameter_count
+        );
 
         param_number: s32 = 1;
         for params {
@@ -302,7 +304,7 @@ XX,             );
                 fetch_row(*obj, statement);
                 #insert #run sprint(#string XX
                 pointer := table_set(*context.db_cache._%1, obj.id, obj);
-XX,             /* 1 */type);
+XX,             /* 1 */ type);
                 array_add(*rows, .{obj.id, pointer});
                 continue;
             case .BUSY; continue;
@@ -331,7 +333,7 @@ XX,             /* 1 */type);
 
         #insert #run sprint(#string XX
         table_remove(*context.db_cache._%1, id);
-XX,     /* 1 */T.type);
+XX,     /* 1 */ T.type);
         pointer = null;
         fetch_id = 0;
 

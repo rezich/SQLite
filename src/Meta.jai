@@ -19,18 +19,18 @@ build_step :: inline (message: *Message) {
                     array_add_if_unique(*model_names, name);
                     sb_table: String_Builder;
                     sb_fk: String_Builder;
-                    print_to_builder(*sb_table, #string XX
+                    print_to_builder(*sb_table, #string SQL
 CREATE TABLE %1(id INTEGER PRIMARY KEY
-XX,                 /* 1 */ name);
-                    append(*sb_table, #string XX
+SQL,                /* 1 */ name);
+                    append(*sb_table, #string SQL
 ,created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ,modified TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-XX                  );
+SQL                 );
                     for serializable_members_of(code_struct.defined_type) {
                         if ORM.member_is_foreign_key(it) {
-                            print_to_builder(*sb_table, #string XX
+                            print_to_builder(*sb_table, #string SQL
 ,%1_id INTEGER
-XX,                         /* 1 */ it.name);
+SQL,                        /* 1 */ it.name);
                             fk_name := ORM.get_foreign_key_name_from(it, name);
                             on_update, on_delete: string;
                             for it.notes {
@@ -40,28 +40,30 @@ XX,                         /* 1 */ it.name);
                                 if key == "on_delete" && is_valid_fk_action(value) then on_delete = replace(value, "_", " ");
                                 is_valid_fk_action :: (value: string) -> bool { for enum_names(Foreign_Key_Action) if it == value then return true; assert(false, "Invalid Foreign_Key_Action in Cached(T) note."); return false; }
                             }
-                            print_to_builder(*sb_fk, #string XX
+                            print_to_builder(*sb_fk, #string SQL
 ,FOREIGN KEY(%1_id) REFERENCES %2(id)%3%4
-XX,                         /* 1 */it.name,
-                            /* 2 */fk_name,
-                            /* 3 */ifx on_update != "" then sprint(" ON UPDATE %", on_update),
-                            /* 4 */ifx on_delete != "" then sprint(" ON DELETE %", on_delete)
+SQL,                        /* 1 */ it.name,
+                            /* 2 */ fk_name,
+                            /* 3 */ ifx on_update != "" then sprint(" ON UPDATE %", on_update),
+                            /* 4 */ ifx on_delete != "" then sprint(" ON DELETE %", on_delete)
                             );
                         }
                         else {
                             sql_type: string;
+                            default_value: string;
                             if it.type.type == {
                                 case .BOOL; #through;
                                 case .ENUM; #through;
-                                case .INTEGER; sql_type="INTEGER";
-                                case .FLOAT;   sql_type="REAL";
+                                case .INTEGER; sql_type="INTEGER"; default_value="0";
+                                case .FLOAT;   sql_type="REAL";    default_value="0";
                                 case .STRING;  sql_type="TEXT";
                             }
-                            print_to_builder(*sb_table, #string XX
-,%1 %2%3
-XX,                         /* 1 */it.name,
-                            /* 2 */sql_type,
-                            /* 3 */" NOT NULL" //TODO: optional nullability
+                            print_to_builder(*sb_table, #string SQL
+,%1 %2%3%4
+SQL,                        /* 1 */ it.name,
+                            /* 2 */ sql_type,
+                            /* 3 */ " NOT NULL", //TODO: optional nullability
+                            /* 4 */ ifx default_value then sprint(" DEFAULT %", default_value)
                             );
                         }
                     }
@@ -73,9 +75,9 @@ XX,                         /* 1 */it.name,
                         if key == "strict" && value != "true" && value != "" { strict_table = true; break; }
                     }
                     append(*sb_table, builder_to_string(*sb_fk));
-                    print_to_builder(*sb_table, #string XX
+                    print_to_builder(*sb_table, #string SQL
 )%1;
-XX,                 /* 1 */ifx strict_table then " STRICT");
+SQL,                /* 1 */ ifx strict_table then " STRICT");
                     array_add(*table_schemas, trim(builder_to_string(*sb_table), " \t\n"));
                 }
             }

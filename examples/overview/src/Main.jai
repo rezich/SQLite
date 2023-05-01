@@ -199,7 +199,7 @@ main :: () {
         result, rows := SQLite.exec(My_Selection, "SELECT COUNT(*) AS count, MAX(modified) AS max_modified FROM Post;"); AssertResultOK();
         log("My_Selection: %", rows);
     }
-    BIG_OL_QUERY :: #string __SQL__
+    BIG_OL_QUERY :: #string SQL
 SELECT
     User.name                         AS author_name,
     COUNT(*)                          AS top_level_post_count,
@@ -207,10 +207,10 @@ SELECT
 FROM Post
 LEFT JOIN User ON User.id = Post.author_id
 WHERE
-    author_id >= ? AND
+    author_id >= ?1 AND
     parent_id IS NULL
 GROUP BY author_id
-__SQL__;
+SQL;
     min_author_id := 2;
     {
         log("testing generic SQL execution with an anonymous struct");

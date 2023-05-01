@@ -26,16 +26,17 @@ open :: (filename := ":memory:") -> result: Result, error: string {
 // this version of exec is not actually SQLite's exec,
 // but it does the same thing, i.e. build a statement & execute it.
 exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_column_names := true, $ignore_returned_rows := false) -> result: Result, selected: [..] row_type {
-    assert(params.count == count_question_marks(sql), "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
-    /* 1 */params.count,
-    /* 2 */count_question_marks(sql)
-    );
-
     rows: [..] row_type;
     rows.allocator = allocator;
 
     result, statement := prepare_v2(sql);
     if result != .OK then return result, rows;
+
+    parameter_count := bind_parameter_count(statement);
+    assert(params.count == parameter_count, "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
+    /* 1 */ params.count,
+    /* 2 */ parameter_count
+    );
 
     param_number: s32 = 1;
     for params {
@@ -120,6 +121,10 @@ last_insert_rowid :: () -> s64 {
 errmsg :: () -> string {
     return to_string(cast(*u8) sqlite3_errmsg(context.db));
 }
+changes :: inline () -> int { return sqlite3_changes(context.db); }
+bind_parameter_count :: (statement: Statement) -> int {
+    return sqlite3_bind_parameter_count(statement);
+}
 bind :: (statement: Statement, index: s32, value: float64) -> Result {
     #if VERBOSE then verbose_bind(value);
     return cast(Result) sqlite3_bind_double(statement, index, value);
@@ -162,16 +167,6 @@ bind :: (statement: Statement, index: s32, value: $T) -> Result #modify {
 
 // this cuts down on code generation
 bind :: inline (statement: Statement, index: s32, $$value: *void) -> Result { assert(value == null); return bind(statement, index); }
-
-count_question_marks :: (sql: string) -> int {
-    question_marks := 0;
-    cursor := find_index_from_left(sql, #char "?");
-    while cursor != -1 {
-        question_marks += 1;
-        cursor = find_index_from_left(sql, #char "?", cursor+1);
-    }
-    return question_marks;
-}
 
 serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member {
     return serializable_members_of(cast(*Type_Info_Struct) type_info(type));
@@ -220,46 +215,46 @@ fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
     /* 1 */database_column_name,
     /* 2 */MEMBER_NAME);
     }
-XX,         /* 1 */column_number,
-            /* 2 */it.name);
+XX,         /* 1 */ column_number,
+            /* 2 */ it.name);
             #if USE_ORM || FROM_METAPROGRAM then if ORM.member_is_foreign_key(it) then { print_to_builder(*sb, #string XX
     {
         id := column_int64(statement, %2);
         found := table_find_pointer(*context.db_cache._%3, id);
         if found then obj.%1 = .{id, found}; else obj.%1 = .{id, null};
     }
-XX,         /* 1 */it.name,
-            /* 2 */column_number,
-            /* 3 */ORM.get_foreign_key_name_from(it, sprint("%", T))
+XX,         /* 1 */ it.name,
+            /* 2 */ column_number,
+            /* 3 */ ORM.get_foreign_key_name_from(it, sprint("%", T))
             ); handled = true; }
             if !handled then if it.type.type == {
                 case .BOOL; print_to_builder(*sb, #string XX
     obj.%1 = cast(bool) column_int(statement, %2);
-XX,             /* 1 */it.name,
-                /* 2 */column_number
+XX,             /* 1 */ it.name,
+                /* 2 */ column_number
                 );
                 case .ENUM; print_to_builder(*sb, #string XX
     obj.%1 = xx column_int%3(statement, %2);
-XX,             /* 1 */it.name,
-                /* 2 */column_number,
-                /* 3 */ifx it.type.runtime_size > 4 then "64"
+XX,             /* 1 */ it.name,
+                /* 2 */ column_number,
+                /* 3 */ ifx it.type.runtime_size > 4 then "64"
                 );
                 case .INTEGER; print_to_builder(*sb, #string XX
     obj.%1 = column_int%3(statement, %2);
-XX,             /* 1 */it.name,
-                /* 2 */column_number,
-                /* 3 */ifx it.type.runtime_size > 4 then "64"
+XX,             /* 1 */ it.name,
+                /* 2 */ column_number,
+                /* 3 */ ifx it.type.runtime_size > 4 then "64"
                 );
                 case .FLOAT; print_to_builder(*sb, #string XX
     obj.%1 = %3column_double(statement, %2);
-XX,             /* 1 */it.name,
-                /* 2 */column_number,
-                /* 3 */ifx it.type.runtime_size == 4 then "xx "
+XX,             /* 1 */ it.name,
+                /* 2 */ column_number,
+                /* 3 */ ifx it.type.runtime_size == 4 then "xx "
                 );
                 case .STRING; print_to_builder(*sb, #string XX
     obj.%1 = column_text(statement, %2);
-XX,             /* 1 */it.name,
-                /* 2 */column_number
+XX,             /* 1 */ it.name,
+                /* 2 */ column_number
                 );
                 case; continue;
             }
@@ -292,7 +287,7 @@ XX,             /* 1 */it.name,
     verbose_end :: () {
         using context.sqlite_verbose;
         for split(statement, "?") {
-            with_console_color(.MAGENTA, write_string(it));
+            with_console_color(.MAGENTA, write_string(trim_left(it, "0123456789")));
             if it_index < parameter_count then with_console_color(.CYAN, write_string(parameters[it_index]));
         }
         write_string("\n");
