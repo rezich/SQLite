@@ -1,13 +1,16 @@
 User :: struct { using #as model: ORM.Model;
     name: string;
     age: int;
+    kind: Kind;
     favorite_floating_point_number: float;
     corporate_id: s64;
     is_awesome := false;
     something_else: string; @do_not_serialize
+
+    Kind :: enum { NORMAL; SUPERUSER; MEGAUSER; ULTRAUSER; }
 }
 
-Post :: struct @strict { using #as model: ORM.Model;
+Post :: struct { using #as model: ORM.Model;
     body: string;
     author: ORM.Cached(User); @on_delete=CASCADE
     parent: ORM.Cached(Post); @on_delete=CASCADE
@@ -235,7 +238,21 @@ __SQL__;
             min_author_id,
             check_column_names=false
         ); AssertResultOK();
-        
+    }
+    log("testing enum support");
+    user_id_to_upgrade := 2;
+    kind_to_upgrade_to := User.Kind.MEGAUSER;
+    {
+        log("  getting User id %", user_id_to_upgrade);
+        result, user := ORM.select_by_id(User, user_id_to_upgrade); AssertResultOK();
+        log("  setting User id %'s kind to %", user_id_to_upgrade, kind_to_upgrade_to);
+        result = ORM.set(user, "kind", kind_to_upgrade_to); AssertResultOK();
+        assert(user.kind == kind_to_upgrade_to);
+    }
+    {
+        log("  getting User id % again", user_id_to_upgrade);
+        result, user := ORM.select_by_id(User, user_id_to_upgrade); AssertResultOK();
+        assert(user.kind == kind_to_upgrade_to);
     }
     ORM.fini();
 }

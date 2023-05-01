@@ -15,17 +15,17 @@ open :: (filename := ":memory:") -> result: Result, error: string {
     error := ifx result != .OK then to_string(cast(*u8) sqlite3_errmsg(context.db));
     return result, error;
 }
-exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> result: Result, error: string {
+/*exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> result: Result, error: string {
     #if VERBOSE then print_color("%\n", sql, color=.HI_MAGENTA);
     error_cstring: *s8; // TODO: reuse instead of allocating & freeing every time?
     result := cast(Result) sqlite3_exec(context.db, xx temp_c_string(sql), callback, callback_arg, *error_cstring);
     error := ifx result != .OK then to_string(cast(*u8) error_cstring);
     sqlite3_free(error_cstring); // TODO: reuse instead of allocating & freeing every time?
     return result, error;
-}
+}*/
 // this version of exec is not actually SQLite's exec,
 // but it does the same thing, i.e. build a statement & execute it.
-exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_column_names := true) -> result: Result, selected: [..] row_type {
+exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_column_names := true, $ignore_returned_rows := false) -> result: Result, selected: [..] row_type {
     assert(params.count == count_question_marks(sql), "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
     /* 1 */params.count,
     /* 2 */count_question_marks(sql)
@@ -41,18 +41,21 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_
     for params {
         if it.type.type == {
             case .BOOL;
-                result = bind(statement, param_number,    <<cast(*bool) it.value_pointer);
+                result = bind(statement, param_number,     <<cast(*bool) it.value_pointer);
             case .ENUM;
-                result = bind(statement, param_number,    <<cast( *s64) it.value_pointer);
+                if it.type.runtime_size <= 4
+                    result = bind(statement, param_number, <<cast( *s64) it.value_pointer);
+                else
+                    result = bind(statement, param_number, <<cast( *s32) it.value_pointer);
             case .INTEGER;
                 if it.type.runtime_size <= 4
-                    result = bind(statement, param_number, <<cast(*s32) it.value_pointer);
+                    result = bind(statement, param_number,  <<cast(*s32) it.value_pointer);
                 else
-                    result = bind(statement, param_number, <<cast(*s64) it.value_pointer);
+                    result = bind(statement, param_number,  <<cast(*s64) it.value_pointer);
             case .FLOAT;
-                result = bind(statement, param_number, <<cast(*float64) it.value_pointer);
+                result = bind(statement, param_number,  <<cast(*float64) it.value_pointer);
             case .STRING;
-                result = bind(statement, param_number, <<cast( *string) it.value_pointer);
+                result = bind(statement, param_number,  <<cast( *string) it.value_pointer);
         }
         if result != .OK then return result, rows;
         param_number += 1;
@@ -60,7 +63,8 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_
 
     while true { result = step(statement); if result == {
         case .ROW;
-            fetch_row(array_add(*rows), statement, check_column_names);
+            #if #run type_info(row_type).type != .VOID then fetch_row(array_add(*rows), statement, check_column_names);
+            else assert(ignore_returned_rows, "attempted to exec(void, ...) without ignore_returned_rows=true, yet row(s) were returned!");
             continue;
         case .BUSY; continue;
         case .DONE; break;
@@ -69,6 +73,9 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_
 
     result = finalize(statement);
     return result, rows;
+}
+exec :: inline (sql: string, params: ..Any, allocator := temp, $check_column_names := true, $ignore_returned_rows := false) -> result: Result {
+    return exec(void, sql, ..params, allocator=allocator, check_column_names=check_column_names, ignore_returned_rows=ignore_returned_rows);
 }
 prepare_v2 :: (sql: string) -> result: Result, statement: Statement {
     #if VERBOSE then verbose_begin(sql);
@@ -143,7 +150,12 @@ bind :: (statement: Statement, index: s32, value: $T) -> Result #modify {
     return (cast(*Type_Info) T).type == .ENUM;
 } {
     #if VERBOSE then verbose_bind(value);
-    return cast(Result) sqlite3_bind_int(statement, index, xx ifx value then 1);
+    #if #run type_info(T).runtime_size <= 4 {
+        return cast(Result) sqlite3_bind_int  (statement, index, cast(s32) value);
+    }
+    else {
+        return cast(Result) sqlite3_bind_int64(statement, index, cast(s64) value);
+    }
 }
 
 #scope_module
@@ -227,15 +239,16 @@ XX,             /* 1 */it.name,
                 /* 2 */column_number
                 );
                 case .ENUM; print_to_builder(*sb, #string XX
-    obj.%1 = xx column_int64(statement, %2);
+    obj.%1 = xx column_int%3(statement, %2);
 XX,             /* 1 */it.name,
-                /* 2 */column_number
+                /* 2 */column_number,
+                /* 3 */ifx it.type.runtime_size > 4 then "64"
                 );
                 case .INTEGER; print_to_builder(*sb, #string XX
     obj.%1 = column_int%3(statement, %2);
 XX,             /* 1 */it.name,
                 /* 2 */column_number,
-                /* 3 */ifx it.type.runtime_size == 8 then "64"
+                /* 3 */ifx it.type.runtime_size > 4 then "64"
                 );
                 case .FLOAT; print_to_builder(*sb, #string XX
     obj.%1 = %3column_double(statement, %2);
@@ -269,9 +282,10 @@ XX,             /* 1 */it.name,
     verbose_begin :: (statement: string) { context.sqlite_verbose.statement = statement; }
     verbose_bind :: (param: $T) {
         using context.sqlite_verbose;
-        #if #run type_info(T).type == .ENUM    then parameters[parameter_count] = tprint("% [%]", cast,force(s64) param, param); else
-        #if #run type_info(T).type == .POINTER then parameters[parameter_count] = "NULL"; else
+        #if #run type_info(T).type == .ENUM    then parameters[parameter_count] = tprint("% [%]", cast,force(s64) param, param);                         else
+        #if #run type_info(T).type == .POINTER then parameters[parameter_count] = "NULL";                                                                else
         #if #run type_info(T).type == .BOOL    then parameters[parameter_count] = tprint("% [%]", ifx param then 1, ifx param then "TRUE" else "FALSE"); else
+        #if #run type_info(T).type == .STRING  then parameters[parameter_count] = tprint("\"%\"", param);                                                else
                                                     parameters[parameter_count] = tprint("%", param);
         parameter_count += 1;
     }

@@ -61,15 +61,15 @@ ORM :: struct {
         database_already_existed := filename != ":memory:" && (#import "File_Utilities").file_exists(filename);
 
         { result, error := open(filename); AssertIfError(); }
-        if !database_already_existed then for `TABLE_SCHEMAS { result, error := exec(it); AssertIfError(); }
+        if !database_already_existed then for `TABLE_SCHEMAS { result := exec(it); AssertIfError(); }
 
         for string.[
             "journal_mode = WAL",
             "synchronous  = NORMAL",
             "foreign_keys = ON",
-        ] { result, error := exec(tprint("PRAGMA %;", it)); AssertIfError(); }
+        ] { result := exec(tprint("PRAGMA %;", it), ignore_returned_rows=true); AssertIfError(); }
 
-        AssertIfError :: () #expand { assert(`result == .OK, "%: %", `result, `error); }
+        AssertIfError :: () #expand { assert(`result == .OK, "%: %", `result, errmsg()); }
     }
 
     fini :: inline () { close(); }
@@ -153,11 +153,8 @@ XX,             /* 1 */T
         result, statement := prepare_v2(SQL_STATEMENT);
         if result != .OK then return result;
 
-        VALUE_IS_A_CACHED_STRUCT :: #run type_info(T2).type == .STRUCT && (cast(*Type_Info_Struct) type_info(T2)).name == "Cached";
-        #if VALUE_IS_A_CACHED_STRUCT
+        #if #run ((type_info(T2).type == .STRUCT && (cast(*Type_Info_Struct) type_info(T2)).name == "Cached"))
             result = bind(statement, 1, value.fetch_id);
-        else #if #run type_info(T2).type == .ENUM then
-            result = bind(statement, 1, cast(s64) value);
         else
             result = bind(statement, 1, value);
         if result != .OK then return result;

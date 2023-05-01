@@ -58,6 +58,17 @@ struct. This seems like a pretty good idea, so by default we check this at runti
 column is unnamed). If, for whatever reason, you don't want this behavior, you can call `exec()`
 with `check_column_names=false`.
 
+To execute a query that doesn't return any rows, you can just write:
+
+```jai
+some_id := 4;
+result := SQLite.exec("DELETE FROM User WHERE id = ?", 4);
+```
+
+If you `exec()` a SQL statement that returns anything, it will error. In case you want to do this
+for whatever reason (for example, setting `PRAGMA`s that can also be queried), pass
+`ignore_returned_rows=false` to `exec()`.
+
 
 ORM
 ---
@@ -113,6 +124,8 @@ retrieved from the database. You can flush this cache at any time using `flush_c
 TODO
 ====
 
+ - allow `exec()` to accept a primitive type for `row_type`, if only one column is being asked for and its type matches
+ - `@default=value` for model fields
  - more compile-time checking of things to make usage more pleasant, e.g. help the user if they forget to `#as` the `using #as model: Model;` in their models
  - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`/...? `ORM.Nullable(T)`...? ...?
  - `ORM.set(T, field_name, value, where, ..params)`
