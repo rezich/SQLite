@@ -38,6 +38,8 @@ fetch(*cached_obj)
 
 is_fetched(cached_obj)
     returns whether or not the object exists in the local database cache
+is_null(cached_obj)
+    returns whether or not the object "is a null reference" (fetch_id == 0)
 flush_cache()
     flush the local database cache
 
@@ -69,7 +71,7 @@ ORM :: struct {
             "foreign_keys = ON",
         ] { result := exec(tprint("PRAGMA %;", it), ignore_returned_rows=true); AssertIfError(); }
 
-        AssertIfError :: () #expand { assert(`result == .OK, "%: %", `result, errmsg()); }
+        AssertIfError :: (loc := #caller_location) #expand { assert(`result == .OK, "%: %", `result, errmsg(), loc=loc); }
     }
 
     fini :: inline () { close(); }
@@ -117,31 +119,25 @@ XX              );
 
         new_obj: *T;
 
-        rows := 0;
-        while true { result = step(statement); ifx result == {
-            case .ROW;
-                rows += 1;
-                id := column_int64(statement, 0);
-                #insert #run sprint(#string XX
-                new_obj = table_set(*context.db_cache._%, id, obj);
-XX,             /* 1 */ T
-                );
-                new_obj.id = id;
-                new_obj.created  = column_int(statement, 1);
-                new_obj.modified = new_obj.created;
-                continue;
-            case .BUSY; continue;
-            case .DONE; break;
-            case;       return result, .{};
-        }}
-        assert(rows == 1);
+        should_return := false;
+        for statement {
+            id := column_int64(statement, 0);
+            #insert #run sprint(#string XX
+            new_obj = table_set(*context.db_cache._%, id, obj);
+XX,         /* 1 */ T
+            );
+            new_obj.id = id;
+            new_obj.created  = column_int(statement, 1);
+            new_obj.modified = new_obj.created;
+        }
+        if should_return then return result, .{};
 
         result = finalize(statement);
         return result, .{new_obj.id, new_obj};
     }
 
     set :: (cached_obj: $T/Cached, $field_name: string) -> result: Result #expand { return set(cached_obj, field_name, null); }
-    set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand { // wish this didn't have to be #expand...
+    set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand {
         SQL_STATEMENT :: #run sprint("UPDATE %1 SET %2%3 = ?, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
             /* 1 */ T.type,
             /* 2 */ field_name,
@@ -162,17 +158,9 @@ XX,             /* 1 */ T
         result = bind(statement, 2, cached_obj.id);
         if result != .OK then return result;
 
-        rows := 0;
-        while true { result = step(statement); ifx result == {
-            case .ROW;
-                rows += 1;
-                cached_obj.modified  = column_int(statement, 0);
-                continue;
-            case .BUSY; continue;
-            case .DONE; break;
-            case;       return result;
-        }}
-        assert(rows == 1);
+        should_return := false;
+        for statement cached_obj.modified = column_int(statement, 0);
+        if should_return then return result;
 
         #insert #run sprint(ifx #run type_info(T2).type == .POINTER then #string XX
         cached_obj.%1 = .{};
@@ -222,18 +210,8 @@ XX,             );
         result = bind(statement, INDEX_OF_ID_QUESTION_MARK, cached_obj.id);
         if result != .OK then return result;
 
-        rows := 0;
-        while true { result = step(statement); ifx result == {
-            case .ROW;
-                rows += 1;
-                cached_obj.pointer.modified  = column_int(statement, 0);
-                continue;
-            case .BUSY; continue;
-            case .DONE; break;
-            case;       return result;
-        }}
-        assert(rows == 1);
-
+        should_return := false;
+        for statement cached_obj.pointer.modified = column_int(statement, 0);
 
         result = finalize(statement);
         return result;
@@ -270,63 +248,23 @@ XX,             );
         rows: [..] Cached(type);
         rows.allocator = allocator;
 
-        result, statement := prepare(SQL_STATEMENT);
-        if result != .OK then return result, rows;
-
-        parameter_count := bind_parameter_count(statement);
-        assert(params.count == parameter_count, "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
-        /* 1 */ params.count,
-        /* 2 */ parameter_count
-        );
-
-        param_number: s32 = 1;
-        for params {
-            if it.type.type == {
-                case .BOOL; #through;
-                case .ENUM; #through;
-                case .INTEGER;
-                    if it.type.runtime_size <= 4
-                        result = bind(statement, param_number, <<cast(*s32) it.value_pointer);
-                    else
-                        result = bind(statement, param_number, <<cast(*s64) it.value_pointer);
-                case .FLOAT;
-                    result = bind(statement, param_number, <<cast(*float64) it.value_pointer);
-                case .STRING;
-                    result = bind(statement, param_number, <<cast( *string) it.value_pointer);
-            }
-            if result != .OK then return result, rows;
-            param_number += 1;
-        }
-
-        should_return := false;
-        for :with_should_return statement {
-            obj: type;
+        result := exec(SQL_STATEMENT, ..params, code=#code {
+            obj: `type;
             fetch_row(*obj, statement);
             #insert #run sprint(#string XX
             pointer := table_set(*context.db_cache._%1, obj.id, obj);
-XX,         /* 1 */ type);
-            array_add(*rows, .{obj.id, pointer});
-        }
-        if should_return then return result, rows;
-
-        result = finalize(statement);
+XX,         /* 1 */ `type);
+            array_add(*`rows, .{obj.id, pointer});
+        });
         return result, rows;
     }
 
     delete :: (using cached_obj: *$T/Cached) -> result: Result {
         SQL_STATEMENT :: #run sprint("DELETE FROM % WHERE id = ?;", T.type);
 
-        result, statement := prepare(SQL_STATEMENT);
+        result := exec(SQL_STATEMENT,
+        /* 1 */ T.type);
         if result != .OK then return result;
-
-        result = bind(statement, 1, id);
-        if result != .OK then return result;
-
-        while true { result = step(statement); if result == {
-            case .BUSY; continue;
-            case .DONE; break;
-            case;       return result;
-        }}
 
         #insert #run sprint(#string XX
         table_remove(*context.db_cache._%1, id);
@@ -334,7 +272,6 @@ XX,     /* 1 */ T.type);
         pointer = null;
         fetch_id = 0;
 
-        result = finalize(statement);
         return result;
     }
 

@@ -1,9 +1,10 @@
 // This is the jai "fancy wrapper" for SQLite.
 // If you want the raw bindings instead for whatever reason, see sqlite3.jai.
 
-Handle    :: #type *sqlite3;
-Callback  :: #type sqlite3_callback;
-Statement :: #type *sqlite3_stmt;
+Handle      :: #type *sqlite3;
+Callback    :: #type sqlite3_callback;
+Statement   :: #type *sqlite3_stmt;
+Column_Type :: enum { INTEGER; FLOAT; BLOB; NULL; TEXT; }
 #load "Result.jai";
 
 #if !FROM_METAPROGRAM #add_context db: Handle;
@@ -15,6 +16,7 @@ open :: (filename := ":memory:") -> result: Result, error: string {
     error := ifx result != .OK then to_string(cast(*u8) sqlite3_errmsg(context.db));
     return result, error;
 }
+
 /*exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> result: Result, error: string {
     #if VERBOSE then print_color("%\n", sql, color=.HI_MAGENTA);
     error_cstring: *s8; // TODO: reuse instead of allocating & freeing every time?
@@ -23,17 +25,15 @@ open :: (filename := ":memory:") -> result: Result, error: string {
     sqlite3_free(error_cstring); // TODO: reuse instead of allocating & freeing every time?
     return result, error;
 }*/
-// this version of exec is not actually SQLite's exec,
-// but it does the same thing, i.e. build a statement & execute it.
-exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_column_names := true, $ignore_returned_rows := false) -> result: Result, selected: [..] row_type {
-    rows: [..] row_type;
-    rows.allocator = allocator;
 
+// this version of exec is not actually SQLite's exec,
+// but it does the same thing, just without a callback function
+exec :: (sql: string, params: ..Any, code: Code=#code {}, $ignore_returned_rows := false) -> result: Result #expand {
     result, statement := prepare(sql);
-    if result != .OK then return result, rows;
+    if result != .OK then return result;
 
     parameter_count := bind_parameter_count(statement);
-    assert(params.count == parameter_count, "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
+    assert(parameter_count == params.count, "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
     /* 1 */ params.count,
     /* 2 */ parameter_count
     );
@@ -42,39 +42,48 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_
     for params {
         if it.type.type == {
             case .BOOL;
-                result = bind(statement, param_number,     <<cast(*bool) it.value_pointer);
-            case .ENUM;
-                if it.type.runtime_size <= 4
-                    result = bind(statement, param_number, <<cast( *s64) it.value_pointer);
-                else
-                    result = bind(statement, param_number, <<cast( *s32) it.value_pointer);
+                result =     bind(statement, param_number, <<cast(*   bool) it.value_pointer);
+            case .ENUM; #through;
             case .INTEGER;
                 if it.type.runtime_size <= 4
-                    result = bind(statement, param_number,  <<cast(*s32) it.value_pointer);
+                    result = bind(statement, param_number, <<cast(*    s32) it.value_pointer);
                 else
-                    result = bind(statement, param_number,  <<cast(*s64) it.value_pointer);
+                    result = bind(statement, param_number, <<cast(*    s64) it.value_pointer);
             case .FLOAT;
-                result = bind(statement, param_number,  <<cast(*float64) it.value_pointer);
+                result =     bind(statement, param_number, <<cast(*float64) it.value_pointer);
             case .STRING;
-                result = bind(statement, param_number,  <<cast( *string) it.value_pointer);
+                result =     bind(statement, param_number, <<cast(* string) it.value_pointer);
         }
-        if result != .OK then return result, rows;
+        if result != .OK then return result;
         param_number += 1;
     }
 
     should_return := false;
-    for :with_should_return statement {
-        #if #run type_info(row_type).type != .VOID then fetch_row(array_add(*rows), statement, check_column_names);
-        else assert(ignore_returned_rows, "attempted to exec(void, ...) without ignore_returned_rows=true, yet row(s) were returned!");
+    asserted := false;
+    for statement {
+        #if code == #code{} && !ignore_returned_rows then assert(false, "exec() without an empty code parameter resulted in rows being returned despite ignore_returned_rows being set to false");
+        else #insert,scope() code;
     }
-    if should_return then return result, rows;
+    if should_return then return result;
 
     result = finalize(statement);
-    return result, rows;
+    return result;
+
+    column_count  :: ()                   -> s32         #expand { return column_count (`statement);                }
+    column_double :: (column_number: s32) -> float64     #expand { return column_double(`statement, column_number); }
+    column_int    :: (column_number: s32) -> s32         #expand { return column_int   (`statement, column_number); }
+    column_int64  :: (column_number: s32) -> s64         #expand { return column_int64 (`statement, column_number); }
+    column_text   :: (column_number: s32) -> string      #expand { return column_text  (`statement, column_number); }
+    column_name   :: (column_number: s32) -> string      #expand { return column_name  (`statement, column_number); }
+    column_type   :: (column_number: s32) -> Column_Type #expand { return column_type  (`statement, column_number); }
 }
-exec :: inline (sql: string, params: ..Any, allocator := temp, $check_column_names := true, $ignore_returned_rows := false) -> result: Result {
-    return exec(void, sql, ..params, allocator=allocator, check_column_names=check_column_names, ignore_returned_rows=ignore_returned_rows);
+
+// this version returns an array of Row_Type
+exec_into_array_of :: ($Row_Type: Type, sql: string, params: ..Any, allocator := temp, $check_column_names := true) -> result: Result, rows: [..] Row_Type {
+    rows: [..] Row_Type; rows.allocator = allocator;
+    return exec(sql, ..params, #code { fetch_row(array_add(*`rows), statement, `check_column_names); }), rows;
 }
+
 prepare :: (sql: string) -> result: Result, statement: Statement {
     #if VERBOSE then verbose_begin(sql);
     sql_cstring := temp_c_string(sql);
@@ -107,7 +116,7 @@ column_name :: (statement: Statement, column_number: s32) -> string {
     return copy_temporary_string(to_string(cast(*u8) sqlite3_column_name(statement, column_number)));
 }
 column_type :: (statement: Statement, column_number: s32) -> enum { INTEGER; FLOAT; BLOB; NULL; TEXT; } {
-    return xx sqlite3_column_name(statement, column_number);
+    return xx sqlite3_column_type(statement, column_number);
 }
 close :: () -> result: Result {
     return cast(Result) sqlite3_close(context.db);
@@ -163,17 +172,8 @@ bind :: (statement: Statement, index: s32, value: $T) -> Result #modify {
     }
 }
 
-for_expansion :: (statement: Statement, body: Code, flags: For_Flags) #expand {
-    `it := void; `it_index := 0;
-    while true { `result = step(statement); if `result == {
-        case .ROW;  defer `it_index += 1; #insert body; continue;
-        case .BUSY;                                     continue;
-        case .DONE;                                     #through;
-        case;                                           break;
-    }}
-}
 // should_return := true; // put this before invoking the following
-with_should_return :: (statement: Statement, body: Code, flags: For_Flags) #expand {
+for_expansion :: (statement: Statement, body: Code, flags: For_Flags) #expand {
     `it := void; `it_index := 0;
     while true { `result = step(statement); if `result == {
         case .ROW;  defer `it_index += 1; #insert body; continue;

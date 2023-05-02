@@ -22,11 +22,13 @@ Unless you `#import "SQLite"(ONLY_C_BINDINGS=true)`, you also get [a more Jai-fr
 The database handle parameter is omitted from every wrapping procedure signature, as it is stored in
 the `context` instead.
 
-Included in this wrapper is a variant of `exec()` that doesn't actually run SQLite's `exec()`, but
+**The following part is under construction.**
+
+~~Included in this wrapper is a variant of `exec()` that doesn't actually run SQLite's `exec()`, but
 does more or less the same thing, except it lets you pass in a variadic number of parameters to be
 `bind()`ed at the end, and a type at the beginning—in addition to returning the SQLite result
 value, it also returns an array of that specified type, with its members containing the results of
-the query. This works with Jai's anonymous structs:
+the query. This works with Jai's anonymous structs:~~
 
 ```jai
 min_author_id := 2;
@@ -50,24 +52,24 @@ assert(result == .OK);
 for rows log("%1\n  posts: %2\n  total score: %3", it.author_name, it.count, it.total_score);
 ```
 
-The array returned by this version of `exec()` is allocated using the optional `allocator`
-parameter, **which is set to `temp` by default.**
+~~The array returned by this version of `exec()` is allocated using the optional `allocator`
+parameter, **which is set to `temp` by default.**~~
 
-In the above example, all of the column names in the SQL statement match the member names of the
+~~In the above example, all of the column names in the SQL statement match the member names of the
 struct. This seems like a pretty good idea, so by default we check this at runtime (unless a given
 column is unnamed). If, for whatever reason, you don't want this behavior, you can call `exec()`
-with `check_column_names=false`.
+with `check_column_names=false`.~~
 
-To execute a query that doesn't return any rows, you can just write:
+~~To execute a query that doesn't return any rows, you can just write:~~
 
 ```jai
 some_id := 4;
 result := SQLite.exec("DELETE FROM User WHERE id = ?", 4);
 ```
 
-If you `exec()` a SQL statement that returns anything, it will error. In case you want to do this
+~~If you `exec()` a SQL statement that returns anything, it will error. In case you want to do this
 for whatever reason (for example, setting `PRAGMA`s that can also be queried), pass
-`ignore_returned_rows=false` to `exec()`.
+`ignore_returned_rows=false` to `exec()`.~~
 
 
 ORM
