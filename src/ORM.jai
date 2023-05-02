@@ -45,6 +45,9 @@ flush_cache()
 
  */
 
+_orm_inited_once := false;
+_orm_db_filename := ":memory:";
+
 ORM :: struct {
     INTERNAL_COLUMN_COUNT :: 3; // id, created, modified
 
@@ -59,10 +62,17 @@ ORM :: struct {
         using pointer: *type;
     }
 
-    init :: (filename := ":memory:") #expand {
-        database_already_existed := filename != ":memory:" && (#import "File_Utilities").file_exists(filename);
+    init :: (_filename := "") {
+        if _orm_inited_once then return;
+        filename := ifx _filename == "" then _orm_db_filename else _filename;
+        _orm_db_filename = filename;
+        _orm_inited_once = true;
+    }
 
-        { result, error := open(filename); AssertIfError(); }
+    open :: () #expand {
+        database_already_existed := _orm_db_filename != ":memory:" && (#import "File_Utilities").file_exists(_orm_db_filename);
+
+        { result, error := open(_orm_db_filename); AssertIfError(); }
         if !database_already_existed then for `TABLE_SCHEMAS { result := exec(it); AssertIfError(); }
 
         for string.[
@@ -74,7 +84,22 @@ ORM :: struct {
         AssertIfError :: (loc := #caller_location) #expand { assert(`result == .OK, "%: %", `result, errmsg(), loc=loc); }
     }
 
-    fini :: inline () { close(); }
+    // we'll see how this goes--it's kinda ugly, but, it does work
+    open_for :: ($code: Code, name: string="", $caller_code := #caller_code) #expand {
+        begin := current_time_monotonic();
+
+        #insert,scope(caller_code) #code _open();
+        #insert,scope(caller_code) code;
+
+        #if VERBOSE {
+            end := current_time_monotonic();
+            delta := end-begin;
+            seconds := cast(float) to_nanoseconds(delta) / cast(float) 1_000_000_000;
+            #if name != "" then print_color("%\n", name, color=.YELLOW);
+            print_color("  % seconds\n\n", seconds, color=ifx name == "" then Console_Color.HI_YELLOW else Console_Color.WHITE);
+        }
+    }
+    _open  :: () #expand { TABLE_SCHEMAS :: `TABLE_SCHEMAS; open(); `defer close(); }
 
     insert :: (obj: $T/Model) -> result: Result, user: Cached(T) {
         assert(obj.id == 0, "Attempted to insert a % with an id already set!", T);
@@ -236,10 +261,10 @@ XX,             );
                 append(*sb, it.name);
                 if member_is_foreign_key(it) then append(*sb, "_id");
             }
-            return sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2 WHERE %3%4%5;",
+            return sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2%3%4%5;",
             /* 1 */ builder_to_string(*sb),
             /* 2 */ type,
-            /* 3 */ where,
+            /* 3 */ ifx where  then sprint(" WHERE %" , where ),
             /* 4 */ ifx limit  then sprint(" LIMIT %" , limit ),
             /* 5 */ ifx offset then sprint(" OFFSET %", offset)
             );

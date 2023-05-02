@@ -21,6 +21,7 @@ main :: () {
     set_working_directory((#import "String").path_strip_filename((#import "System").get_path_of_running_executable()));
     (#import "File").file_delete(DATABASE_FILENAME); // delete the databse every run for now
     ORM.init(DATABASE_FILENAME); // omit the filename for an in-memory database
+    ORM.open();
     result: SQLite.Result;
     remembered_post_id: s64;
     {
@@ -251,7 +252,7 @@ SQL;
         result, user := ORM.select_by_id(User, user_id_to_upgrade); AssertResultOK();
         assert(user.kind == kind_to_upgrade_to);
     }
-    ORM.fini();
+    SQLite.close();
 }
 
 AssertResultOK :: (loc := #caller_location) #expand { assert(`result == .OK, "%: %", `result, SQLite.errmsg(), loc=loc); }

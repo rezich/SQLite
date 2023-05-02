@@ -3,7 +3,9 @@ SQLite for Jai
 
 This is a module for Jai that allows you to interface with SQLite however works best for you.
 
-***however, this module is still in early development and lacks rigorous testing & some features.***
+**However, this module is still in early development and lacks rigorous testing & some features.**
+
+***This module is heavily under construction right now!!***
 
 
 C API bindings

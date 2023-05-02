@@ -11,7 +11,7 @@ Column_Type :: enum { INTEGER; FLOAT; BLOB; NULL; TEXT; }
 
 Foreign_Key_Action :: enum { NO_ACTION; RESTRICT; SET_NULL; SET_DEFAULT; CASCADE; }
 
-open :: (filename := ":memory:") -> result: Result, error: string {
+open :: (filename: string) -> result: Result, error: string {
     result := cast(Result) sqlite3_open(xx temp_c_string(filename), *context.db);
     error := ifx result != .OK then to_string(cast(*u8) sqlite3_errmsg(context.db));
     return result, error;
