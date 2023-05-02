@@ -93,7 +93,7 @@ ORM :: struct {
             );
         }
 
-        result, statement := prepare_v2(SQL_STATEMENT);
+        result, statement := prepare(SQL_STATEMENT);
         if result != .OK then return result, .{};
 
         #insert -> string {
@@ -150,7 +150,7 @@ XX,             /* 1 */ T
 
         #if #run type_info(T2).type == .POINTER then assert(value == null);
 
-        result, statement := prepare_v2(SQL_STATEMENT);
+        result, statement := prepare(SQL_STATEMENT);
         if result != .OK then return result;
 
         #if #run ((type_info(T2).type == .STRUCT && (cast(*Type_Info_Struct) type_info(T2)).name == "Cached"))
@@ -198,7 +198,7 @@ XX,     /* 1 */ ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0
         }
         INDEX_OF_ID_QUESTION_MARK :: #run serializable_members_of(T.type).count+1;
 
-        result, statement := prepare_v2(SQL_STATEMENT);
+        result, statement := prepare(SQL_STATEMENT);
         if result != .OK then return result;
 
         #insert -> string {
@@ -270,7 +270,7 @@ XX,             );
         rows: [..] Cached(type);
         rows.allocator = allocator;
 
-        result, statement := prepare_v2(SQL_STATEMENT);
+        result, statement := prepare(SQL_STATEMENT);
         if result != .OK then return result, rows;
 
         parameter_count := bind_parameter_count(statement);
@@ -298,19 +298,16 @@ XX,             );
             param_number += 1;
         }
 
-        while true { result = step(statement); if result == {
-            case .ROW;
-                obj: type;
-                fetch_row(*obj, statement);
-                #insert #run sprint(#string XX
-                pointer := table_set(*context.db_cache._%1, obj.id, obj);
-XX,             /* 1 */ type);
-                array_add(*rows, .{obj.id, pointer});
-                continue;
-            case .BUSY; continue;
-            case .DONE; break;
-            case;       return result, rows;
-        }}
+        should_return := false;
+        for :with_should_return statement {
+            obj: type;
+            fetch_row(*obj, statement);
+            #insert #run sprint(#string XX
+            pointer := table_set(*context.db_cache._%1, obj.id, obj);
+XX,         /* 1 */ type);
+            array_add(*rows, .{obj.id, pointer});
+        }
+        if should_return then return result, rows;
 
         result = finalize(statement);
         return result, rows;
@@ -319,7 +316,7 @@ XX,             /* 1 */ type);
     delete :: (using cached_obj: *$T/Cached) -> result: Result {
         SQL_STATEMENT :: #run sprint("DELETE FROM % WHERE id = ?;", T.type);
 
-        result, statement := prepare_v2(SQL_STATEMENT);
+        result, statement := prepare(SQL_STATEMENT);
         if result != .OK then return result;
 
         result = bind(statement, 1, id);

@@ -29,7 +29,7 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_
     rows: [..] row_type;
     rows.allocator = allocator;
 
-    result, statement := prepare_v2(sql);
+    result, statement := prepare(sql);
     if result != .OK then return result, rows;
 
     parameter_count := bind_parameter_count(statement);
@@ -62,15 +62,12 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_
         param_number += 1;
     }
 
-    while true { result = step(statement); if result == {
-        case .ROW;
-            #if #run type_info(row_type).type != .VOID then fetch_row(array_add(*rows), statement, check_column_names);
-            else assert(ignore_returned_rows, "attempted to exec(void, ...) without ignore_returned_rows=true, yet row(s) were returned!");
-            continue;
-        case .BUSY; continue;
-        case .DONE; break;
-        case;       return result, rows;
-    }}
+    should_return := false;
+    for :with_should_return statement {
+        #if #run type_info(row_type).type != .VOID then fetch_row(array_add(*rows), statement, check_column_names);
+        else assert(ignore_returned_rows, "attempted to exec(void, ...) without ignore_returned_rows=true, yet row(s) were returned!");
+    }
+    if should_return then return result, rows;
 
     result = finalize(statement);
     return result, rows;
@@ -78,7 +75,7 @@ exec :: ($row_type: Type, sql: string, params: ..Any, allocator := temp, $check_
 exec :: inline (sql: string, params: ..Any, allocator := temp, $check_column_names := true, $ignore_returned_rows := false) -> result: Result {
     return exec(void, sql, ..params, allocator=allocator, check_column_names=check_column_names, ignore_returned_rows=ignore_returned_rows);
 }
-prepare_v2 :: (sql: string) -> result: Result, statement: Statement {
+prepare :: (sql: string) -> result: Result, statement: Statement {
     #if VERBOSE then verbose_begin(sql);
     sql_cstring := temp_c_string(sql);
     statement: Statement;
@@ -146,14 +143,17 @@ bind :: (statement: Statement, index: s32) -> Result {
     #if VERBOSE then verbose_bind(null);
     return cast(Result) sqlite3_bind_null(statement, index);
 }
-// nice to have:
+
+
+// nice-to-have significant deviations from the standard API:
+
 bind :: (statement: Statement, index: s32, value: bool) -> Result {
     #if VERBOSE then verbose_bind(value);
     return cast(Result) sqlite3_bind_int(statement, index, xx ifx value then 1);
 }
 bind :: (statement: Statement, index: s32, value: $T) -> Result #modify {
     return (cast(*Type_Info) T).type == .ENUM;
-} {
+}{
     #if VERBOSE then verbose_bind(value);
     #if #run type_info(T).runtime_size <= 4 {
         return cast(Result) sqlite3_bind_int  (statement, index, cast(s32) value);
@@ -162,6 +162,27 @@ bind :: (statement: Statement, index: s32, value: $T) -> Result #modify {
         return cast(Result) sqlite3_bind_int64(statement, index, cast(s64) value);
     }
 }
+
+for_expansion :: (statement: Statement, body: Code, flags: For_Flags) #expand {
+    `it := void; `it_index := 0;
+    while true { `result = step(statement); if `result == {
+        case .ROW;  defer `it_index += 1; #insert body; continue;
+        case .BUSY;                                     continue;
+        case .DONE;                                     #through;
+        case;                                           break;
+    }}
+}
+// should_return := true; // put this before invoking the following
+with_should_return :: (statement: Statement, body: Code, flags: For_Flags) #expand {
+    `it := void; `it_index := 0;
+    while true { `result = step(statement); if `result == {
+        case .ROW;  defer `it_index += 1; #insert body; continue;
+        case .BUSY;                                     continue;
+        case .DONE;                                     break;
+        case;       `should_return = true;              break;
+    }}
+}
+// if should_return then return result, ...; // put this after invoking the preceding
 
 #scope_module
 
