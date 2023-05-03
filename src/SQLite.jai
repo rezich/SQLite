@@ -1,26 +1,78 @@
 // This is the jai "fancy wrapper" for SQLite.
 // If you want the raw bindings instead for whatever reason, see ../lib/sqlite3.jai.
 
-Handle      :: #type *sqlite3;
-Callback    :: #type sqlite3_callback;
-Statement   :: #type *sqlite3_stmt;
-Column_Type :: enum { INTEGER; FLOAT; BLOB; NULL; TEXT; }
-#load "Result.jai";
-
-#if !FROM_METAPROGRAM #add_context db: Handle;
-
+Handle             :: #type *sqlite3;
+Callback           :: #type sqlite3_callback;
+Statement          :: #type *sqlite3_stmt;
+Column_Type        :: enum { INTEGER; FLOAT; BLOB; NULL; TEXT; }
 Foreign_Key_Action :: enum { NO_ACTION; RESTRICT; SET_NULL; SET_DEFAULT; CASCADE; }
 
-open :: (filename: string) -> result: Result, error: string {
-    result := cast(Result) sqlite3_open(xx temp_c_string(filename), *context.db);
-    error := ifx result != .OK then to_string(cast(*u8) sqlite3_errmsg(context.db));
+#load "Result.jai";
+
+assert_ok :: (result: Result, loc := #caller_location) { assert(result == .OK, "%: %", result, errmsg(), loc=loc); }
+
+
+SQLite_Info :: struct {
+    filename:  string = ":memory:";
+    handle:    Handle;
+    is_open:   bool;
+    pragmas:   [..] string;
+}
+
+#if !FROM_METAPROGRAM #add_context sqlite: SQLite_Info;
+
+
+
+
+
+set_pragmas :: (new_pragmas: [] string) -> Result {
+    using context.sqlite;
+    result: Result;
+    if is_open {
+        assert(false, "(maybe don't do this just yet though)");
+        for new_pragmas {
+            // it seem weird that it appends the pragmas if the database is open...
+            result = exec(tprint("PRAGMA %;", it));
+            if result != .OK then return result;
+            array_add(*pragmas, it);
+        }
+    }
+    // ...yet replaces them when it's not...
+    else array_copy(*pragmas, new_pragmas);
+    return result;
+    // ...but it makes sense, I think, for reasons I'm too tired to explain right now.
+}
+
+open :: () -> result: Result, error: string {
+    using context.sqlite;
+    result := cast(Result) sqlite3_open(xx temp_c_string(filename), *handle);
+    error := ifx result != .OK then to_string(cast(*u8) sqlite3_errmsg(handle));
+    is_open = result == .OK;
+    for pragmas { result = exec(tprint("PRAGMA %;", it)); if result != .OK then return result, error; }
     return result, error;
+}
+
+open_for :: ($code: Code, name: string="", $caller_code := #caller_code) #expand {
+    begin := current_time_monotonic();
+    #if VERBOSE then       verbose_begin_open_for(name);
+    #if VERBOSE then defer verbose_end\ _open_for(name);
+
+    open(); defer close();
+    
+    #insert,scope(caller_code) code;
+}
+
+close :: () -> Result {
+    using context.sqlite;
+    result := cast(Result) sqlite3_close(handle);
+    if result == .OK then is_open = false;
+    return result;
 }
 
 /*exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> result: Result, error: string {
     #if VERBOSE then print_color("%\n", sql, color=.HI_MAGENTA);
     error_cstring: *s8; // TODO: reuse instead of allocating & freeing every time?
-    result := cast(Result) sqlite3_exec(context.db, xx temp_c_string(sql), callback, callback_arg, *error_cstring);
+    result := cast(Result) sqlite3_exec(context.sqlite.handle, xx temp_c_string(sql), callback, callback_arg, *error_cstring);
     error := ifx result != .OK then to_string(cast(*u8) error_cstring);
     sqlite3_free(error_cstring); // TODO: reuse instead of allocating & freeing every time?
     return result, error;
@@ -39,7 +91,7 @@ exec :: (
     $only_use_first_callback_argument := true,       //           & the rest from exec() if you want
 
     $ignore_returned_rows             := false       // Option 3: ignore returned rows
-) -> result: Result
+) -> Result
 #modify { if code != #code,null || callback != null then ignore_returned_rows = true; return true; }
 #expand {
     result, statement := prepare(sql);
@@ -112,11 +164,11 @@ exec_rows :: ($Row_Type: Type, sql: string, params: ..Any, allocator := temp, $c
 }
 
 // this one returns an array of Column_Type, just one value per row
-exec_column :: ($Column_Type: Type, sql: string, params: ..Any, allocator := temp, unique := false) -> result: Result, column: [..] Column_Type {
+exec_column :: ($Column_Type: Type, sql: string, params: ..Any, allocator := temp, $unique := false) -> result: Result, column: [..] Column_Type {
     column: [..] Column_Type; column.allocator = allocator;
     return exec(sql, ..params, #code {
         value := fetch_value(`Column_Type, statement);
-        if `unique then array_add_if_unique(*`column, value);
+        #if `unique then array_add_if_unique(*`column, value);
         else array_add(*`column, value);
     }), column;
 }
@@ -124,14 +176,15 @@ exec_column :: ($Column_Type: Type, sql: string, params: ..Any, allocator := tem
 // this one returns just a single value of type Value_Type
 exec_value :: ($Value_Type: Type, sql: string, params: ..Any) -> result: Result, value: Value_Type, success: bool {
     value: Value_Type; success: bool;
-    return exec(sql, ..params, #code { assert(it_index == 0); `value = fetch_value(`Value_Type, statement); success = true; }), value;
+    return exec(sql, ..params, #code { assert(it_index == 0); `value = fetch_value(`Value_Type, statement); `success = true; }), value, success;
 }
+
 
 prepare :: (sql: string) -> result: Result, statement: Statement {
     #if VERBOSE then verbose_begin(sql);
     sql_cstring := temp_c_string(sql);
     statement: Statement;
-    return cast(Result) sqlite3_prepare_v2(context.db, cast(*s8) sql_cstring, cast(s32) c_style_strlen(sql_cstring), *statement, null), statement;
+    return cast(Result) sqlite3_prepare_v2(context.sqlite.handle, cast(*s8) sql_cstring, cast(s32) c_style_strlen(sql_cstring), *statement, null), statement;
 }
 step :: (statement: Statement) -> Result {
     return cast(Result) sqlite3_step(statement);
@@ -161,16 +214,13 @@ column_name :: (statement: Statement, column_number: s32) -> string {
 column_type :: (statement: Statement, column_number: s32) -> enum { INTEGER; FLOAT; BLOB; NULL; TEXT; } {
     return xx sqlite3_column_type(statement, column_number);
 }
-close :: () -> result: Result {
-    return cast(Result) sqlite3_close(context.db);
-}
 last_insert_rowid :: () -> s64 {
-    return sqlite3_last_insert_rowid(context.db);
+    return sqlite3_last_insert_rowid(context.sqlite.handle);
 }
 errmsg :: () -> string {
-    return to_string(cast(*u8) sqlite3_errmsg(context.db));
+    return to_string(cast(*u8) sqlite3_errmsg(context.sqlite.handle));
 }
-changes :: inline () -> int { return sqlite3_changes(context.db); }
+changes :: inline () -> int { return sqlite3_changes(context.sqlite.handle); }
 bind_parameter_count :: (statement: Statement) -> int {
     return sqlite3_bind_parameter_count(statement);
 }
@@ -219,7 +269,7 @@ for_expansion :: (statement: Statement, body: Code, flags: For_Flags) #expand {
         case .ROW;  defer `it_index += 1; #insert body; continue;
         case .BUSY;                                     continue;
         case .DONE;                                     break;
-        case;       `should_return = true;              break;
+        case;       assert_ok(`result);   
     }}
 }
 // if should_return then return result, ...; // put this after invoking the preceding
@@ -347,26 +397,63 @@ XX,     /* 1 */ var_name,
         statement: string;
         parameter_count: int;
         parameters: [100] string;
+        open_for_begin: Apollo_Time;
     };
-    verbose_begin :: (statement: string) { context.sqlite_verbose.statement = statement; }
+    verbose_begin :: (statement: string) {
+        context.sqlite_verbose.statement = statement;
+    }
     verbose_bind :: (param: $T) {
         using context.sqlite_verbose;
-        #if #run type_info(T).type == .ENUM    then parameters[parameter_count] = tprint("% [%]", cast,force(s64) param, param);                         else
-        #if #run type_info(T).type == .POINTER then parameters[parameter_count] = "NULL";                                                                else
-        #if #run type_info(T).type == .BOOL    then parameters[parameter_count] = tprint("% [%]", ifx param then 1, ifx param then "TRUE" else "FALSE"); else
-        #if #run type_info(T).type == .STRING  then parameters[parameter_count] = tprint("\"%\"", param);                                                else
-                                                    parameters[parameter_count] = tprint("%", param);
+        #if #run type_info(T).type == .ENUM    then
+            parameters[parameter_count] = tprint("% [%]", cast,force(s64) param, param);
+        else
+        #if #run type_info(T).type == .POINTER then
+            parameters[parameter_count] = "NULL";
+        else
+        #if #run type_info(T).type == .BOOL    then
+            parameters[parameter_count] = tprint("% [%]", ifx param then 1, ifx param then "TRUE" else "FALSE");
+        else
+        #if #run type_info(T).type == .STRING  then
+            parameters[parameter_count] = tprint("\"%\"", param);
+        else
+            parameters[parameter_count] = tprint("%", param);
         parameter_count += 1;
     }
     verbose_end :: () {
         using context.sqlite_verbose;
-        for split(statement, "?") {
-            with_console_color(.MAGENTA, write_string(trim_left(it, "0123456789")));
-            if it_index < parameter_count then with_console_color(.CYAN, write_string(parameters[it_index]));
+        parameter_index := 0;
+        for split(statement, "\n") {
+            if open_for_begin != .{} {
+                print_color(" ", color=.BG_HI_YELLOW);
+            }
+            print_color(" ", color=.BG_BLUE);
+            write_string(" ");
+            for split(it, "?") {
+                with_console_color(.MAGENTA, write_string(trim_left(it, "0123456789")));
+                if parameter_index < parameter_count then with_console_color(.CYAN, write_string(parameters[it_index]));
+                parameter_index += 1;
+            }
+            write_string("\n");
         }
-        write_string("\n");
         parameter_count = 0;
         statement = "";
+    }
+    verbose_begin_open_for :: (name: string) {
+        using context.sqlite_verbose;
+        open_for_begin = current_time_monotonic();
+        write_string("\n");
+        print_color(" ", color=.BG_YELLOW);
+        print_color(" %\n", ifx name else "(unnamed block)", color=.YELLOW);
+    }
+    verbose_end\ _open_for :: (name: string) {
+        using context.sqlite_verbose;
+        end := current_time_monotonic();
+        seconds := cast(float) to_nanoseconds(end-open_for_begin) / cast(float) 1_000_000_000;
+        print_color(" ", color=.BG_YELLOW);
+        print_color(" %\n", ifx name else "(unnamed block)", color=.YELLOW);
+        print_color("    % seconds ", seconds, color=Console_Color.BG_YELLOW);
+        write_string("\n\n");
+        open_for_begin = .{};
     }
 }
 

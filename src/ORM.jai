@@ -45,8 +45,8 @@ flush_cache()
 
  */
 
-_orm_inited_once := false;
-_orm_db_filename := ":memory:";
+// this and init(), etc. are going to be moved over to SQLite.jai soon
+// it's all going to go in the context
 
 ORM :: struct {
     INTERNAL_COLUMN_COUNT :: 3; // id, created, modified
@@ -62,46 +62,23 @@ ORM :: struct {
         using pointer: *type;
     }
 
-    init :: (_filename := "") {
-        if _orm_inited_once then return;
-        filename := ifx _filename == "" then _orm_db_filename else _filename;
-        _orm_db_filename = filename;
-        _orm_inited_once = true;
-    }
-
-    open :: () #expand {
-        database_already_existed := _orm_db_filename != ":memory:" && (#import "File_Utilities").file_exists(_orm_db_filename);
-
-        { result, error := open(_orm_db_filename); AssertIfError(); }
-        if !database_already_existed then for `TABLE_SCHEMAS { result := exec(it); AssertIfError(); }
-
-        for string.[
+    init :: () #expand {
+        using context.sqlite;
+        assert(!is_open);
+        database_already_existed := filename != ":memory:" && (#import "File_Utilities").file_exists(filename);
+        set_pragmas(.[
             "journal_mode = WAL",
             "synchronous  = NORMAL",
-            "foreign_keys = ON",
-        ] { result := exec(tprint("PRAGMA %;", it)); AssertIfError(); }
-
-        AssertIfError :: (loc := #caller_location) #expand { assert(`result == .OK, "%: %", `result, errmsg(), loc=loc); }
-    }
-
-    // we'll see how this goes--it's kinda ugly, but, it does work
-    open_for :: ($code: Code, name: string="", $caller_code := #caller_code) #expand {
-        begin := current_time_monotonic();
-
-        #insert,scope(caller_code) #code _open();
-        #insert,scope(caller_code) code;
-
-        #if VERBOSE {
-            end := current_time_monotonic();
-            delta := end-begin;
-            seconds := cast(float) to_nanoseconds(delta) / cast(float) 1_000_000_000;
-            #if name != "" then print_color("%\n", name, color=.YELLOW);
-            print_color("  % seconds\n\n", seconds, color=ifx name == "" then Console_Color.HI_YELLOW else Console_Color.WHITE);
+            "foreign_keys = ON"
+        ]);
+        if !database_already_existed then {
+            open();
+            for `TABLE_SCHEMAS assert_ok(exec(it));
+            close();
         }
     }
-    _open  :: () #expand { TABLE_SCHEMAS :: `TABLE_SCHEMAS; open(); `defer close(); } // :P
 
-    insert :: (obj: $T/Model) -> result: Result, user: Cached(T) {
+    insert :: (obj: $T/Model) -> Cached(T) {
         assert(obj.id == 0, "Attempted to insert a % with an id already set!", T);
 
         SQL_STATEMENT :: #run -> string {
@@ -121,22 +98,20 @@ ORM :: struct {
         }
 
         result, statement := prepare(SQL_STATEMENT);
-        if result != .OK then return result, .{};
+        log("%\n%\n\n", context.sqlite.is_open, SQL_STATEMENT);
+        assert_ok(result);
 
         #insert -> string {
             sb: String_Builder;
             question_mark_index := 1;
             for serializable_members_of(T) {
                 print_to_builder(*sb, ifx member_is_foreign_key(it) then #string XX
-        result = ifx obj.%2.fetch_id == 0 then bind(statement, %1) else bind(statement, %1, obj.%2.fetch_id);
+        assert_ok(ifx obj.%2.fetch_id == 0 then bind(statement, %1) else bind(statement, %1, obj.%2.fetch_id));
 XX              else #string XX
-        result = bind(statement, %1, obj.%2);
+        assert_ok(bind(statement, %1, obj.%2));
 XX,             /* 1 */ question_mark_index,
                 /* 2 */ it.name
                 );
-                append(*sb, #string XX
-        if result != .OK then return result, .{};
-XX              );
                 question_mark_index += 1;
             }
             return builder_to_string(*sb);
@@ -144,7 +119,6 @@ XX              );
 
         new_obj: *T;
 
-        should_return := false;
         for statement {
             id := column_int64(statement, 0);
             #insert #run sprint(#string XX
@@ -155,14 +129,14 @@ XX,         /* 1 */ T
             new_obj.created  = column_int(statement, 1);
             new_obj.modified = new_obj.created;
         }
-        if should_return then return result, .{};
+        assert(!!new_obj);
 
-        result = finalize(statement);
-        return result, .{new_obj.id, new_obj};
+        assert_ok(finalize(statement));
+        return .{new_obj.id, new_obj};
     }
 
-    set :: (cached_obj: $T/Cached, $field_name: string) -> result: Result #expand { return set(cached_obj, field_name, null); }
-    set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) -> result: Result #expand {
+    set :: (cached_obj: $T/Cached, $field_name: string) { set(cached_obj, field_name, null); }
+    set :: (cached_obj: $T/Cached, $field_name: string, value: $T2) #expand {
         SQL_STATEMENT :: #run sprint("UPDATE %1 SET %2%3 = ?, modified = CURRENT_TIMESTAMP WHERE id = ? RETURNING strftime(\"%%s\", modified);",
             /* 1 */ T.type,
             /* 2 */ field_name,
@@ -172,20 +146,17 @@ XX,         /* 1 */ T
         #if #run type_info(T2).type == .POINTER then assert(value == null);
 
         result, statement := prepare(SQL_STATEMENT);
-        if result != .OK then return result;
+        assert_ok(result);
 
         #if #run ((type_info(T2).type == .STRUCT && (cast(*Type_Info_Struct) type_info(T2)).name == "Cached"))
-            result = bind(statement, 1, value.fetch_id);
+            assert_ok(bind(statement, 1, value.fetch_id));
         else
-            result = bind(statement, 1, value);
-        if result != .OK then return result;
+            assert_ok(bind(statement, 1, value));
 
-        result = bind(statement, 2, cached_obj.id);
-        if result != .OK then return result;
+        assert_ok(bind(statement, 2, cached_obj.id));
 
-        should_return := false;
         for statement cached_obj.modified = column_int(statement, 0);
-        if should_return then return result;
+        assert_ok(result);
 
         #insert #run sprint(ifx #run type_info(T2).type == .POINTER then #string XX
         cached_obj.%1 = .{};
@@ -193,11 +164,10 @@ XX          else #string XX
         cached_obj.%1 = value;
 XX,     /* 1 */ ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0, field_name.count-3) else field_name);
 
-        result = finalize(statement);
-        return result;
+        assert_ok(finalize(statement));
     }
 
-    update :: (cached_obj: $T/Cached) -> result: Result {
+    update :: (cached_obj: $T/Cached) {
         SQL_STATEMENT :: #run -> string {
             sb_fields: String_Builder;
             for serializable_members_of(T.type) {
@@ -212,7 +182,7 @@ XX,     /* 1 */ ifx ends_with_nocase(field_name, "_id") then slice(field_name, 0
         INDEX_OF_ID_QUESTION_MARK :: #run serializable_members_of(T.type).count+1;
 
         result, statement := prepare(SQL_STATEMENT);
-        if result != .OK then return result;
+        assert_ok(result);
 
         #insert -> string {
             sb: String_Builder;
@@ -226,33 +196,32 @@ XX,             /* 1 */ question_mark_index,
                 /* 2 */ it.name
                 );
                 append(*sb, #string XX
-        if result != .OK then return result;
+        assert_ok(result);
 XX,             );
             }
             return builder_to_string(*sb);
         }
 
         result = bind(statement, INDEX_OF_ID_QUESTION_MARK, cached_obj.id);
-        if result != .OK then return result;
+        assert_ok(result);
 
-        should_return := false;
         for statement cached_obj.pointer.modified = column_int(statement, 0);
+        assert_ok(result);
 
         result = finalize(statement);
-        return result;
+        assert_ok(result);
     }
 
     // update :: ($type: Type, set: string, where: string, ..params: Any)
 
-    select_by_id :: ($type: Type, id: s64) -> result: Result, obj: Cached(type)
+    select_by_id :: ($type: Type, id: s64) -> Cached(type)
     #modify { return is_a_model(type); } {
-        result, rows := select_from(type, where="id = ?", id);
+        rows := select_from(type, where="id = ?", id); //TODO: these three lines one
         defer array_free(rows);
-        if rows.count == 0 then return result, .{};
-        return result, rows[0];
+        return rows[0];
     }
 
-    select_from :: ($type: Type, $where := "", params: ..Any, $limit := 0, $offset := 0, allocator := temp) -> result: Result, rows: [..] Cached(type)
+    select_from :: ($type: Type, $where := "", params: ..Any, $limit := 0, $offset := 0, allocator := temp) -> [..] Cached(type)
     #modify { return is_a_model(type); } {
         assert(is_a_model(type), "type must using #as a Model");
 
@@ -283,32 +252,29 @@ XX,             );
 XX,         /* 1 */ `type);
             array_add(*`rows, .{obj.id, pointer});
         });
-        return result, rows;
+        assert_ok(result);
+        return rows;
     }
 
-    delete :: (using cached_obj: *$T/Cached) -> result: Result {
+    delete :: (using cached_obj: *$T/Cached) {
         SQL_STATEMENT :: #run sprint("DELETE FROM % WHERE id = ?;", T.type);
 
-        result := exec(SQL_STATEMENT,
-        /* 1 */ T.type);
-        if result != .OK then return result;
+        assert_ok(exec(SQL_STATEMENT,
+        /* 1 */ T.type
+        ));
 
         #insert #run sprint(#string XX
         table_remove(*context.db_cache._%1, id);
 XX,     /* 1 */ T.type);
         pointer = null;
         fetch_id = 0;
-
-        return result;
     }
 
     // delete_from :: ($type: Type, where: string, ..params: Any)
 
-    fetch :: (cached: *$T/Cached) -> result: Result {
+    fetch :: (cached: *$T/Cached) {
         assert(cached.fetch_id != 0);
-        result, fetched := select_by_id(T.type, cached.fetch_id);
-        cached.pointer = fetched.pointer;
-        return result;
+        cached.pointer = select_by_id(T.type, cached.fetch_id).pointer;
     }
 
     is_a_model :: inline x => (#import "Compiler").is_subclass_of(cast(*Type_Info) x, "Model");

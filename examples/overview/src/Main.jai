@@ -18,10 +18,11 @@ Post :: struct { using #as model: ORM.Model;
 
 main :: () {
     DATABASE_FILENAME :: "database.db";
+    context.sqlite.filename = DATABASE_FILENAME;
     set_working_directory((#import "String").path_strip_filename((#import "System").get_path_of_running_executable()));
     (#import "File").file_delete(DATABASE_FILENAME); // delete the databse every run for now
-    ORM.init(DATABASE_FILENAME); // omit the filename for an in-memory database
-    ORM.open();
+    ORM.init();
+    SQLite.open();
     result: SQLite.Result;
     remembered_post_id: s64;
     {
@@ -252,7 +253,16 @@ SQL;
         result, user := ORM.select_by_id(User, user_id_to_upgrade); AssertResultOK();
         assert(user.kind == kind_to_upgrade_to);
     }
+    {
+        result, journal_mode := SQLite.exec_value(string, "PRAGMA journal_mode;");
+        log("journal mode: %", journal_mode);
+    }
     SQLite.close();
+    SQLite.set_pragmas(.[]);
+    SQLite.open_for(#code {
+        result, journal_mode := SQLite.exec_value(string, "PRAGMA journal_mode;");
+        log("journal mode: %", journal_mode);
+    }, "just doin some stuff");
 }
 
 AssertResultOK :: (loc := #caller_location) #expand { assert(`result == .OK, "%: %", `result, SQLite.errmsg(), loc=loc); }
