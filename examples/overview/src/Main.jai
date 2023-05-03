@@ -197,7 +197,7 @@ main :: () {
             count: int;
             max_modified: string;
         }
-        result, rows := SQLite.exec_into_array_of(My_Selection, "SELECT COUNT(*) AS count, MAX(modified) AS max_modified FROM Post;"); AssertResultOK();
+        result, rows := SQLite.exec_rows(My_Selection, "SELECT COUNT(*) AS count, MAX(modified) AS max_modified FROM Post;"); AssertResultOK();
         log("My_Selection: %", rows);
     }
     BIG_OL_QUERY :: #string SQL
@@ -215,7 +215,7 @@ SQL;
     min_author_id := 2;
     {
         log("testing generic SQL execution with an anonymous struct");
-        result, rows := SQLite.exec_into_array_of(struct { author_name: string; top_level_post_count: int; latest_post_date: string; },
+        result, rows := SQLite.exec_rows(struct { author_name: string; top_level_post_count: int; latest_post_date: string; },
             BIG_OL_QUERY,
             min_author_id
         ); AssertResultOK();
@@ -225,13 +225,13 @@ SQL;
         /* 3 */it.latest_post_date
         );
     } #if false { // remove #if false to see a runtime error
-        result, rows := SQLite.exec_into_array_of(struct { blauthor_name: string; blop_level_post_count: int; blatest_post_date: string; },
+        result, rows := SQLite.exec_rows(struct { blauthor_name: string; blop_level_post_count: int; blatest_post_date: string; },
             BIG_OL_QUERY,
             min_author_id
         ); AssertResultOK();
     } {
         log("no runtime error here because check_column_names=false");
-        result, rows := SQLite.exec_into_array_of(struct { blauthor_name: string; blop_level_post_count: int; blatest_post_date: string; },
+        result, rows := SQLite.exec_rows(struct { blauthor_name: string; blop_level_post_count: int; blatest_post_date: string; },
             BIG_OL_QUERY,
             min_author_id,
             check_column_names=false

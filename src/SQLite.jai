@@ -1,5 +1,5 @@
 // This is the jai "fancy wrapper" for SQLite.
-// If you want the raw bindings instead for whatever reason, see sqlite3.jai.
+// If you want the raw bindings instead for whatever reason, see ../lib/sqlite3.jai.
 
 Handle      :: #type *sqlite3;
 Callback    :: #type sqlite3_callback;
@@ -28,7 +28,20 @@ open :: (filename: string) -> result: Result, error: string {
 
 // this version of exec is not actually SQLite's exec,
 // but it does the same thing, just without a callback function
-exec :: (sql: string, params: ..Any, code: Code=#code {}, $ignore_returned_rows := false) -> result: Result #expand {
+exec :: (
+    sql:   string, // the SQL statement
+    params: ..Any, // parameters to bind
+
+    $code: Code                        = #code,null, // Option 1: for each row, run this code
+
+    $callback: Callback                = null,       // Option 2: for each row, invoke this callback
+    first_callback_arg: *void          = null,       //           with this argument,
+    $only_use_first_callback_argument := true,       //           & the rest from exec() if you want
+
+    $ignore_returned_rows             := false       // Option 3: ignore returned rows
+) -> result: Result
+#modify { if code != #code,null || callback != null then ignore_returned_rows = true; return true; }
+#expand {
     result, statement := prepare(sql);
     if result != .OK then return result;
 
@@ -59,10 +72,18 @@ exec :: (sql: string, params: ..Any, code: Code=#code {}, $ignore_returned_rows 
     }
 
     should_return := false;
-    asserted := false;
     for statement {
-        #if code == #code{} && !ignore_returned_rows then assert(false, "exec() without an empty code parameter resulted in rows being returned despite ignore_returned_rows being set to false");
-        else #insert,scope() code;
+        assert(ignore_returned_rows);
+        #if code != #code,null then #insert,scope() code;
+        #if callback != null {
+            #if only_use_first_callback_argument {
+                callback(callback_arg, column_count(statement), null, null);
+            }
+            else {
+                #run log("WARNING: only_use_first_callback_argument=false is not supported right now!");
+                callback(callback_arg, column_count(statement), null, null); // TODO: implement the other two arguments, *maybe*?
+            }
+        }
     }
     if should_return then return result;
 
@@ -78,10 +99,32 @@ exec :: (sql: string, params: ..Any, code: Code=#code {}, $ignore_returned_rows 
     column_type   :: (column_number: s32) -> Column_Type #expand { return column_type  (`statement, column_number); }
 }
 
-// this version returns an array of Row_Type
-exec_into_array_of :: ($Row_Type: Type, sql: string, params: ..Any, allocator := temp, $check_column_names := true) -> result: Result, rows: [..] Row_Type {
+// this one returns a single Row_Type
+exec_row :: ($Row_Type: Type, sql: string, params: ..Any, $check_column_names := true) -> result: Result, row: Row_Type, success: bool {
+    row: Row_Type; success: bool;
+    return exec(sql, ..params, #code { assert(it_index == 0); fetch_row(*`row, statement, `check_column_names); `success = true; }), row, success;
+}
+
+// this one returns an array of Row_Type
+exec_rows :: ($Row_Type: Type, sql: string, params: ..Any, allocator := temp, $check_column_names := true) -> result: Result, rows: [..] Row_Type {
     rows: [..] Row_Type; rows.allocator = allocator;
     return exec(sql, ..params, #code { fetch_row(array_add(*`rows), statement, `check_column_names); }), rows;
+}
+
+// this one returns an array of Column_Type, just one value per row
+exec_column :: ($Column_Type: Type, sql: string, params: ..Any, allocator := temp, unique := false) -> result: Result, column: [..] Column_Type {
+    column: [..] Column_Type; column.allocator = allocator;
+    return exec(sql, ..params, #code {
+        value := fetch_value(`Column_Type, statement);
+        if `unique then array_add_if_unique(*`column, value);
+        else array_add(*`column, value);
+    }), column;
+}
+
+// this one returns just a single value of type Value_Type
+exec_value :: ($Value_Type: Type, sql: string, params: ..Any) -> result: Result, value: Value_Type, success: bool {
+    value: Value_Type; success: bool;
+    return exec(sql, ..params, #code { assert(it_index == 0); `value = fetch_value(`Value_Type, statement); success = true; }), value;
 }
 
 prepare :: (sql: string) -> result: Result, statement: Statement {
@@ -160,16 +203,13 @@ bind :: (statement: Statement, index: s32, value: bool) -> Result {
     #if VERBOSE then verbose_bind(value);
     return cast(Result) sqlite3_bind_int(statement, index, xx ifx value then 1);
 }
-bind :: (statement: Statement, index: s32, value: $T) -> Result #modify {
-    return (cast(*Type_Info) T).type == .ENUM;
-}{
+bind :: (statement: Statement, index: s32, value: $T) -> Result
+#modify { return (cast(*Type_Info) T).type == .ENUM; } {
     #if VERBOSE then verbose_bind(value);
-    #if #run type_info(T).runtime_size <= 4 {
+    #if #run type_info(T).runtime_size <= 4
         return cast(Result) sqlite3_bind_int  (statement, index, cast(s32) value);
-    }
-    else {
+    else
         return cast(Result) sqlite3_bind_int64(statement, index, cast(s64) value);
-    }
 }
 
 // should_return := true; // put this before invoking the following
@@ -197,23 +237,30 @@ serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Me
     NOTE_DO_NOT_SERIALIZE :: "do_not_serialize";
 
     members: [..] Type_Info_Struct_Member;
-    for info.members {
-        is_a_valid_type :=
-            it.type.type == .BOOL    ||
-            it.type.type == .ENUM    ||
-            it.type.type == .INTEGER ||
-            it.type.type == .FLOAT   ||
-            it.type.type == .STRING;
-        #if USE_ORM || FROM_METAPROGRAM { if ORM.is_a_model(info) && ORM.member_is_foreign_key(it) then is_a_valid_type = true; }
+    for member: info.members {
+        is_a_valid_type := is_serializable(member.type);
+        #if USE_ORM || FROM_METAPROGRAM { if ORM.is_a_model(info) && ORM.member_is_foreign_key(member) then is_a_valid_type = true; }
         if !is_a_valid_type then continue;
         #if USE_ORM || FROM_METAPROGRAM {
             has_do_not_serialize_note := false;
-            for it.notes if it == NOTE_DO_NOT_SERIALIZE { has_do_not_serialize_note = true; break; }
-            if has_do_not_serialize_note then continue;
+            for member.notes if it == NOTE_DO_NOT_SERIALIZE then continue member;
         }
-        array_add(*members, it);
+        array_add(*members, member);
     }
     return members;
+}
+
+is_serializable :: (info) =>    info.type == .BOOL    ||
+                                info.type == .ENUM    ||
+                                info.type == .INTEGER ||
+                                info.type == .FLOAT   ||
+                                info.type == .STRING;
+
+fetch_value :: ($Value_Type: Type, statement: Statement) -> Value_Type
+#modify { return is_serializable(cast(*Type_Info) Value_Type); } {
+    value: Value_Type;
+    #insert #run get_column_cast("value", 0, type_info(Value_Type));
+    return value;
 }
 
 fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
@@ -248,40 +295,46 @@ XX,         /* 1 */ it.name,
             /* 2 */ column_number,
             /* 3 */ ORM.get_foreign_key_name_from(it, sprint("%", T))
             ); handled = true; }
-            if !handled then if it.type.type == {
-                case .BOOL; print_to_builder(*sb, #string XX
-    obj.%1 = cast(bool) column_int(statement, %2);
-XX,             /* 1 */ it.name,
-                /* 2 */ column_number
-                );
-                case .ENUM; print_to_builder(*sb, #string XX
-    obj.%1 = xx column_int%3(statement, %2);
-XX,             /* 1 */ it.name,
-                /* 2 */ column_number,
-                /* 3 */ ifx it.type.runtime_size > 4 then "64"
-                );
-                case .INTEGER; print_to_builder(*sb, #string XX
-    obj.%1 = column_int%3(statement, %2);
-XX,             /* 1 */ it.name,
-                /* 2 */ column_number,
-                /* 3 */ ifx it.type.runtime_size > 4 then "64"
-                );
-                case .FLOAT; print_to_builder(*sb, #string XX
-    obj.%1 = %3column_double(statement, %2);
-XX,             /* 1 */ it.name,
-                /* 2 */ column_number,
-                /* 3 */ ifx it.type.runtime_size == 4 then "xx "
-                );
-                case .STRING; print_to_builder(*sb, #string XX
-    obj.%1 = column_text(statement, %2);
-XX,             /* 1 */ it.name,
-                /* 2 */ column_number
-                );
-                case; continue;
+            if !handled then {
+                print_to_builder(*sb, "    obj.%", get_column_cast(it.name, column_number, it.type));
             }
             column_number += 1;
         }
         return builder_to_string(*sb);
+    }
+}
+
+get_column_cast :: (var_name: string, column_number: int, info: *Type_Info) -> string {
+    if info.type == {
+        case .BOOL; return tprint(#string XX
+%1 = cast(bool) column_int(statement, %2);
+XX,     /* 1 */ var_name,
+        /* 2 */ column_number
+        );
+        case .ENUM; return tprint(#string XX
+%1 = xx column_int%3(statement, %2);
+XX,     /* 1 */ var_name,
+        /* 2 */ column_number,
+        /* 3 */ ifx info.runtime_size > 4 then "64"
+        );
+        case .INTEGER; return tprint(#string XX
+%1 = column_int%3(statement, %2);
+XX,     /* 1 */ var_name,
+        /* 2 */ column_number,
+        /* 3 */ ifx info.runtime_size > 4 then "64"
+        );
+        case .FLOAT; return tprint(#string XX
+%1 = %3column_double(statement, %2);
+XX,     /* 1 */ var_name,
+        /* 2 */ column_number,
+        /* 3 */ ifx info.runtime_size == 4 then "xx "
+        );
+        case .STRING; return tprint(#string XX
+%1 = column_text(statement, %2);
+XX,     /* 1 */ var_name,
+        /* 2 */ column_number
+        );
+        case; assert(false, "this should never happen"); return "";
     }
 }
 

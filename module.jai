@@ -14,4 +14,4 @@
     #if FROM_METAPROGRAM && MAKE_MIGRATIONS then #load "src/Migrator.jai";
     #if FROM_METAPROGRAM || USE_ORM         then #load "src/ORM.jai";
 }
-                                                 #load "src/sqlite3.jai";
+                                                 #load "lib/sqlite3.jai";

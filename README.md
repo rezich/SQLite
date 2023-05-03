@@ -128,7 +128,7 @@ retrieved from the database. You can flush this cache at any time using `flush_c
 TODO
 ====
 
- - delete a ton of code from `ORM` now that we have a better `exec()`
+ - delete ~~a ton of~~ even more code from `ORM` now that we have a better `exec()` and such
  - allow `exec()` to accept a primitive type for `row_type`, if only one column is being asked for and its type matches
  - `@default=value` for model fields
  - more compile-time checking of things to make usage more pleasant, e.g. help the user if they forget to `#as` the `using #as model: Model;` in their models
@@ -145,3 +145,5 @@ TODO
  - consider whether or not the `ORM` namespace-struct-thing makes sense in the long run
  - actually try this out with slightly non-trivial things like threading and such and see if it actually is good at all lmao
  - finish wrapping the rest of the SQLite API
+ - test the code, like, at all
+ - write documentation

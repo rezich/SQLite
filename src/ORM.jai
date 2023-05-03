@@ -79,7 +79,7 @@ ORM :: struct {
             "journal_mode = WAL",
             "synchronous  = NORMAL",
             "foreign_keys = ON",
-        ] { result := exec(tprint("PRAGMA %;", it), ignore_returned_rows=true); AssertIfError(); }
+        ] { result := exec(tprint("PRAGMA %;", it)); AssertIfError(); }
 
         AssertIfError :: (loc := #caller_location) #expand { assert(`result == .OK, "%: %", `result, errmsg(), loc=loc); }
     }
@@ -99,7 +99,7 @@ ORM :: struct {
             print_color("  % seconds\n\n", seconds, color=ifx name == "" then Console_Color.HI_YELLOW else Console_Color.WHITE);
         }
     }
-    _open  :: () #expand { TABLE_SCHEMAS :: `TABLE_SCHEMAS; open(); `defer close(); }
+    _open  :: () #expand { TABLE_SCHEMAS :: `TABLE_SCHEMAS; open(); `defer close(); } // :P
 
     insert :: (obj: $T/Model) -> result: Result, user: Cached(T) {
         assert(obj.id == 0, "Attempted to insert a % with an id already set!", T);
@@ -244,14 +244,16 @@ XX,             );
 
     // update :: ($type: Type, set: string, where: string, ..params: Any)
 
-    select_by_id :: ($type: Type, id: s64) -> result: Result, obj: Cached(type) #modify { return is_a_model(type); } {
+    select_by_id :: ($type: Type, id: s64) -> result: Result, obj: Cached(type)
+    #modify { return is_a_model(type); } {
         result, rows := select_from(type, where="id = ?", id);
         defer array_free(rows);
         if rows.count == 0 then return result, .{};
         return result, rows[0];
     }
 
-    select_from :: ($type: Type, $where := "", params: ..Any, $limit := 0, $offset := 0, allocator := temp) -> result: Result, rows: [..] Cached(type) #modify { return is_a_model(type); } {
+    select_from :: ($type: Type, $where := "", params: ..Any, $limit := 0, $offset := 0, allocator := temp) -> result: Result, rows: [..] Cached(type)
+    #modify { return is_a_model(type); } {
         assert(is_a_model(type), "type must using #as a Model");
 
         SQL_STATEMENT :: #run -> string {
