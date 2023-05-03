@@ -18,11 +18,7 @@ SQLite_Info :: struct {
     is_open:   bool;
     pragmas:   [..] string;
 }
-
 #if !FROM_METAPROGRAM #add_context sqlite: SQLite_Info;
-
-
-
 
 
 set_pragmas :: (new_pragmas: [] string) -> Result {
@@ -43,6 +39,7 @@ set_pragmas :: (new_pragmas: [] string) -> Result {
     // ...but it makes sense, I think, for reasons I'm too tired to explain right now.
 }
 
+
 open :: () -> result: Result, error: string {
     using context.sqlite;
     result := cast(Result) sqlite3_open(xx temp_c_string(filename), *handle);
@@ -52,7 +49,7 @@ open :: () -> result: Result, error: string {
     return result, error;
 }
 
-open_for :: ($code: Code, name: string="", $caller_code := #caller_code) #expand {
+open_for :: ($code: Code, name: string="", $caller_code := #caller_code) {
     begin := current_time_monotonic();
     #if VERBOSE then       verbose_begin_open_for(name);
     #if VERBOSE then defer verbose_end\ _open_for(name);
@@ -68,6 +65,7 @@ close :: () -> Result {
     if result == .OK then is_open = false;
     return result;
 }
+
 
 /*exec :: (sql: string, callback: Callback = null, callback_arg: *void = null) -> result: Result, error: string {
     #if VERBOSE then print_color("%\n", sql, color=.HI_MAGENTA);
@@ -246,13 +244,11 @@ bind :: (statement: Statement, index: s32) -> Result {
     return cast(Result) sqlite3_bind_null(statement, index);
 }
 
-
-// nice-to-have significant deviations from the standard API:
-
 bind :: (statement: Statement, index: s32, value: bool) -> Result {
     #if VERBOSE then verbose_bind(value);
     return cast(Result) sqlite3_bind_int(statement, index, xx ifx value then 1);
 }
+
 bind :: (statement: Statement, index: s32, value: $T) -> Result
 #modify { return (cast(*Type_Info) T).type == .ENUM; } {
     #if VERBOSE then verbose_bind(value);
@@ -262,17 +258,20 @@ bind :: (statement: Statement, index: s32, value: $T) -> Result
         return cast(Result) sqlite3_bind_int64(statement, index, cast(s64) value);
 }
 
-// should_return := true; // put this before invoking the following
 for_expansion :: (statement: Statement, body: Code, flags: For_Flags) #expand {
     `it := void; `it_index := 0;
     while true { `result = step(statement); if `result == {
         case .ROW;  defer `it_index += 1; #insert body; continue;
         case .BUSY;                                     continue;
         case .DONE;                                     break;
-        case;       assert_ok(`result);   
+        case;       assert_ok(`result);
     }}
 }
-// if should_return then return result, ...; // put this after invoking the preceding
+
+optional_cleanup :: () {
+    #if USE_ORM then flush_cache(reinit=false);
+    array_free(context.sqlite.pragmas);
+}
 
 #scope_module
 
@@ -285,11 +284,11 @@ serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member {
 
 serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Member {
     NOTE_DO_NOT_SERIALIZE :: "do_not_serialize";
-
+    assert(#compile_time);
     members: [..] Type_Info_Struct_Member;
     for member: info.members {
         is_a_valid_type := is_serializable(member.type);
-        #if USE_ORM || FROM_METAPROGRAM { if ORM.is_a_model(info) && ORM.member_is_foreign_key(member) then is_a_valid_type = true; }
+        #if USE_ORM || FROM_METAPROGRAM { if is_a_model(info) && member_is_foreign_key(member) then is_a_valid_type = true; }
         if !is_a_valid_type then continue;
         #if USE_ORM || FROM_METAPROGRAM {
             has_do_not_serialize_note := false;
@@ -314,7 +313,7 @@ fetch_value :: ($Value_Type: Type, statement: Statement) -> Value_Type
 }
 
 fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
-    #if (USE_ORM || FROM_METAPROGRAM) && #run ORM.is_a_model(T) {
+    #if (USE_ORM || FROM_METAPROGRAM) && #run is_a_model(T) {
         obj.id       = column_int64(statement, 0);
         obj.created  = column_int  (statement, 1);
         obj.modified = column_int  (statement, 2);
@@ -322,7 +321,7 @@ fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
     #insert -> string {
         sb: String_Builder;
         column_number := 0;
-        #if (USE_ORM || FROM_METAPROGRAM) && #run ORM.is_a_model(T) then column_number = ORM.INTERNAL_COLUMN_COUNT;
+        #if (USE_ORM || FROM_METAPROGRAM) && #run is_a_model(T) then column_number = ORM_INTERNAL_COLUMN_COUNT;
         for serializable_members_of(T) {
             handled := false;
             #if check_column_names then print_to_builder(*sb, #string XX
@@ -335,7 +334,7 @@ fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
     }
 XX,         /* 1 */ column_number,
             /* 2 */ it.name);
-            #if USE_ORM || FROM_METAPROGRAM then if ORM.member_is_foreign_key(it) then { print_to_builder(*sb, #string XX
+            #if USE_ORM || FROM_METAPROGRAM then if member_is_foreign_key(it) then { print_to_builder(*sb, #string XX
     {
         id := column_int64(statement, %2);
         found := table_find_pointer(*context.db_cache._%3, id);
@@ -343,7 +342,7 @@ XX,         /* 1 */ column_number,
     }
 XX,         /* 1 */ it.name,
             /* 2 */ column_number,
-            /* 3 */ ORM.get_foreign_key_name_from(it, sprint("%", T))
+            /* 3 */ get_foreign_key_name_from(it, sprint("%", T))
             ); handled = true; }
             if !handled then {
                 print_to_builder(*sb, "    obj.%", get_column_cast(it.name, column_number, it.type));

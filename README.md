@@ -82,7 +82,7 @@ You can also `#import "SQLite"(USE_ORM=true);`, which, if you've set up your met
 can automatically interface with SQLite, like this:
 
 ```jai
-using SQLite.ORM;
+using SQLite;
 
 My_Struct :: struct { using model: Model;
     name: string;
@@ -119,7 +119,8 @@ the database, it won't load the associated `My_Other_Struct` into `other` for yo
 Context
 -------
 
-The basic SQLite wrapper will add a `db` to the `context`, which is the current database connection.
+The basic SQLite wrapper will add a `sqlite: SQLIte_Info` to the `context`, which contains the
+current database connection and other such bookkeeping.
 
 Using the ORM will add an additional `db_cache` struct to the `context`, which is a cache of rows
 retrieved from the database. You can flush this cache at any time using `flush_cache();`.
@@ -144,7 +145,6 @@ TODO
  - maybe have the wrapper functions return enums that are subsets of `Result`? (`#must`...?)
  - more generally, figure out if there's a more ergonomic way to handle SQLite result and/or error passing
  - **add some kind of automatic migration system**—we can do SQLite stuff at compile time, so why not?
- - consider whether or not the `ORM` namespace-struct-thing makes sense in the long run
  - actually try this out with slightly non-trivial things like threading and such and see if it actually is good at all lmao
  - finish wrapping the rest of the SQLite API
  - test the code, like, at all

@@ -15,7 +15,7 @@ build_step :: inline (message: *Message) {
             for typechecked_struct: typechecked.structs {
                 code_struct := typechecked_struct.expression;
                 name := code_struct.defined_type.name;
-                if ORM.is_a_model(code_struct.defined_type) {
+                if is_a_model(code_struct.defined_type) {
                     array_add_if_unique(*model_names, name);
                     sb_table: String_Builder;
                     sb_fk: String_Builder;
@@ -27,11 +27,11 @@ SQL,                /* 1 */ name);
 ,modified TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 SQL                 );
                     for serializable_members_of(code_struct.defined_type) {
-                        if ORM.member_is_foreign_key(it) {
+                        if member_is_foreign_key(it) {
                             print_to_builder(*sb_table, #string SQL
 ,%1_id INTEGER
 SQL,                        /* 1 */ it.name);
-                            fk_name := ORM.get_foreign_key_name_from(it, name);
+                            fk_name := get_foreign_key_name_from(it, name);
                             on_update, on_delete: string;
                             for it.notes {
                                 found, key, value := split_from_left(it, #char "=");
@@ -94,10 +94,10 @@ XX, iterate_model_names(#string XX
     _%1: Table(s64, %1);
 XX), #string XX
 }
-__flush_database_cache :: () {
+__flush_database_cache :: (reinit := true) {
     using context.db_cache;
 XX, iterate_model_names(#string XX
-    deinit(*_%1); init(*_%1); // this is probably dumb
+    deinit(*_%1); if reinit then init(*_%1); // this is probably dumb
 XX), #string XX
 }
 TABLE_SCHEMAS :: string.[
