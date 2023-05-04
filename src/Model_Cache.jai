@@ -16,7 +16,7 @@ is_fetched(cached_obj)
     returns whether or not the object exists in the local database cache
 is_null(cached_obj)
     returns whether or not the object "is a null reference" (fetch_id == 0)
-flush_cache()
+reset_model_cache()
     flush the database cache in the context
 
 */
@@ -46,7 +46,7 @@ operator? :: (cached_objs: [] $T/Cached, when_null: Code, caller_code := #caller
 }
 operator== :: (a: $T/Cached, b: T) -> bool { return a.fetch_id == b.fetch_id && a.pointer == b.pointer; }
 
-init_ORM :: () #expand {
+init_model_cache :: () #expand {
     using context.sqlite;
     assert(!is_open);
     database_already_existed := filename != ":memory:" && (#import "File_Utilities").file_exists(filename);
@@ -106,7 +106,7 @@ XX,         /* 1 */ question_mark_index,
         assert(it_index == 0);
         id := column_int64(statement, 0);
         #insert #run sprint(#string XX
-        new_obj = table_set(*context.db_cache._%, id, obj);
+        new_obj = table_set(*context.sqlite_model_cache._%, id, obj);
 XX,     /* 1 */ T
         );
         new_obj.id = id;
@@ -224,7 +224,7 @@ select_from :: (
         obj: `T;
         fetch_row(*obj, statement);
         #insert #run sprint(#string XX
-        pointer := table_set(*context.db_cache._%1, obj.id, obj);
+        pointer := table_set(*context.sqlite_model_cache._%1, obj.id, obj);
 XX,     /* 1 */ `T);
         array_add(*`rows, .{obj.id, pointer});
     });
@@ -272,7 +272,7 @@ select_from :: (
     result := exec(SQL_STATEMENT, ..new_params, code=#code {
         fetch_row(*`obj, statement);
         #insert #run sprint(#string XX
-        `obj_pointer = table_set(*context.db_cache._%1, `obj.id, `obj);
+        `obj_pointer = table_set(*context.sqlite_model_cache._%1, `obj.id, `obj);
 XX,     /* 1 */ `T);
     });
     assert_ok(result);
@@ -306,7 +306,7 @@ delete :: (using cached_obj: *$T/Cached) {
     ));
 
     #insert #run sprint(#string XX
-    table_remove(*context.db_cache._%1, id);
+    table_remove(*context.sqlite_model_cache._%1, id);
 XX, /* 1 */ T.type);
     pointer = null;
     fetch_id = 0;
@@ -341,8 +341,8 @@ get_foreign_key_name_from :: (member: Type_Info_Struct_Member, model_name: strin
 is_fetched :: inline (using cached: $T/Cached) -> bool { return pointer != null; }
 is_null    :: inline (using cached: $T/Cached) -> bool { return fetch_id == 0;   }
 
-#placeholder __flush_database_cache;
-flush_cache :: inline (reinit := true) { __flush_database_cache(reinit); } // :P
+#placeholder __reset_model_cache;
+reset_model_cache :: inline (reinit := true) { __reset_model_cache(reinit); } // :P
 
 
 #import "Hash_Table";

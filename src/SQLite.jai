@@ -281,7 +281,7 @@ for_expansion :: (statement: Statement, body: Code, flags: For_Flags) #expand {
 }
 
 optional_cleanup :: () {
-    #if USE_ORM then flush_cache(reinit=false);
+    #if USE_MODEL_CACHE then reset_model_cache(reinit=false);
     array_free(context.sqlite.pragmas);
 }
 
@@ -298,9 +298,9 @@ serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Me
     members: [..] Type_Info_Struct_Member;
     for member: info.members {
         is_a_valid_type := is_serializable(member.type);
-        #if USE_ORM || FROM_METAPROGRAM { if is_a_model(info) && member_is_foreign_key(member) then is_a_valid_type = true; }
+        #if USE_MODEL_CACHE || FROM_METAPROGRAM { if is_a_model(info) && member_is_foreign_key(member) then is_a_valid_type = true; }
         if !is_a_valid_type then continue;
-        #if USE_ORM || FROM_METAPROGRAM {
+        #if USE_MODEL_CACHE || FROM_METAPROGRAM {
             for member.notes if it == NOTE_DO_NOT_SERIALIZE ||
                                 it == NOTE_FETCH    then continue member;
         }
@@ -323,7 +323,7 @@ fetch_value :: ($Value_Type: Type, statement: Statement) -> Value_Type
 }
 
 fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
-    #if (USE_ORM || FROM_METAPROGRAM) && #run is_a_model(T) {
+    #if (USE_MODEL_CACHE || FROM_METAPROGRAM) && #run is_a_model(T) {
         obj.id       = column_int64(statement, 0);
         obj.created  = column_int  (statement, 1);
         obj.modified = column_int  (statement, 2);
@@ -331,7 +331,7 @@ fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
     #insert -> string {
         sb: String_Builder;
         column_number := 0;
-        #if (USE_ORM || FROM_METAPROGRAM) && #run is_a_model(T) then column_number = ORM_INTERNAL_COLUMN_COUNT;
+        #if (USE_MODEL_CACHE || FROM_METAPROGRAM) && #run is_a_model(T) then column_number = ORM_INTERNAL_COLUMN_COUNT;
         for serializable_members_of(T) {
             handled := false;
             #if check_column_names then print_to_builder(*sb, #string XX
@@ -344,10 +344,10 @@ fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
     }
 XX,         /* 1 */ column_number,
             /* 2 */ it.name);
-            #if USE_ORM || FROM_METAPROGRAM then if member_is_foreign_key(it) then { print_to_builder(*sb, #string XX
+            #if USE_MODEL_CACHE || FROM_METAPROGRAM then if member_is_foreign_key(it) then { print_to_builder(*sb, #string XX
     {
         id := column_int64(statement, %2);
-        found := table_find_pointer(*context.db_cache._%3, id);
+        found := table_find_pointer(*context.sqlite_model_cache._%3, id);
         if found then obj.%1 = .{id, found}; else obj.%1 = .{id, null};
     }
 XX,         /* 1 */ it.name,
@@ -409,6 +409,7 @@ XX,     /* 1 */ var_name,
         OPEN_FOR_NAME   :: Console_Color.YELLOW;
         OPEN_FOR_RULER  :: Console_Color.BG_YELLOW;
     }
+    MINIMUM_OPEN_FOR_HEADER_AND_FOOTER_WIDTH :: 40;
     #add_context sqlite_verbose: struct {
         statement: string;
         parameter_count: int;
@@ -458,16 +459,22 @@ XX,     /* 1 */ var_name,
         using context.sqlite_verbose;
         open_for_begin = current_time_monotonic();
         write_string("\n");
+        for 0..max(MINIMUM_OPEN_FOR_HEADER_AND_FOOTER_WIDTH, name.count+2) print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER); write_string("\n");
         print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
         print_color(" %\n", ifx name else "(unnamed block)", color=COLOR_SCHEME.OPEN_FOR_NAME);
     }
+    
     verbose_end\ _open_for :: (name: string) {
         using context.sqlite_verbose;
         end := current_time_monotonic();
         seconds := cast(float) to_nanoseconds(end-open_for_begin) / cast(float) 1_000_000_000;
+        print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER); write_string("\n");
         print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
         print_color(" %\n", ifx name else "(unnamed block)", color=COLOR_SCHEME.OPEN_FOR_NAME);
-        print_color("    % seconds ", seconds, color=COLOR_SCHEME.OPEN_FOR_RULER);
+        beginning_of_footer := tprint("    % seconds ", seconds);
+        with_console_color(COLOR_SCHEME.OPEN_FOR_RULER, write_string(beginning_of_footer));
+        for 0..max(MINIMUM_OPEN_FOR_HEADER_AND_FOOTER_WIDTH, name.count+2)-beginning_of_footer.count print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
+
         write_string("\n\n");
         open_for_begin = .{};
     }

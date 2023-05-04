@@ -181,7 +181,7 @@ main :: () {
         log("  we can tell the Post's author's name is % because it's still in the cache.", post.author.name);
     }
     log("flushing the cache");
-    ORM.flush_cache();
+    ORM.reset_model_cache();
     {
         post: ORM.Cached(Post);
         log("selecting the Post we remembered way earlier");
@@ -269,8 +269,7 @@ AssertResultOK :: (loc := #caller_location) #expand { assert(`result == .OK, "%:
 
 #import "Basic";
 
-SQLite :: #import,dir "../../../../SQLite"(USE_ORM=true, VERBOSE=true);
-ORM :: SQLite.ORM;
+SQLite :: #import,dir "../../../../SQLite"(VERBOSE=true, USE_MODEL_CACHE=true);
 
-#add_context db_cache: Database_Cache;
+#add_context sqlite_model_cache: SQLite_Model_Cache;
 

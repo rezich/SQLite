@@ -77,9 +77,9 @@ for whatever reason (for example, setting `PRAGMA`s that can also be queried), p
 ORM
 ---
 
-You can also `#import "SQLite"(USE_ORM=true);`, which, if you've set up your metaprogram correctly
-(see [the “overview” example](examples/overview)), allows you to more easily create Jai structs that
-can automatically interface with SQLite, like this:
+You can also `#import "SQLite"(USE_MODEL_CACHE=true);`, which, if you've set up your metaprogram
+correctly (see [the “overview” example](examples/overview)), allows you to more easily create
+Jai structs that can automatically interface with SQLite, like this:
 
 ```jai
 using SQLite;
@@ -122,8 +122,8 @@ Context
 The basic SQLite wrapper will add a `sqlite: SQLIte_Info` to the `context`, which contains the
 current database connection and other such bookkeeping.
 
-Using the ORM will add an additional `db_cache` struct to the `context`, which is a cache of rows
-retrieved from the database. You can flush this cache at any time using `flush_cache();`.
+Using the ORM will add an additional `sqlite_model_cache` struct to the `context`, which is a cache of rows
+retrieved from the database. You can flush this cache at any time using `reset_model_cache();`.
 
 
 TODO

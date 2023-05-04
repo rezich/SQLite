@@ -88,14 +88,14 @@ SQL,                /* 1 */ ifx strict_table then " STRICT");
                 if !generated_code {
                     quick_sort(model_names, compare_strings);
                     add_to_build(message.workspace, #string XX
-Database_Cache :: struct {
+SQLite_Model_Cache :: struct {
     #import "Hash_Table";
 XX, iterate_model_names(#string XX
     _%1: Table(s64, %1);
 XX), #string XX
 }
-__flush_database_cache :: (reinit := true) {
-    using context.db_cache;
+__reset_model_cache :: (reinit := true) {
+    using context.sqlite_model_cache;
 XX, iterate_model_names(#string XX
     table_reset(*_%1); //TODO: fix this dumb stopgap measure
     if _%1.allocated > 0 { deinit(*_%1); if reinit then init(*_%1); }
