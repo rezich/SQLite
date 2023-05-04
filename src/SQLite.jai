@@ -84,21 +84,24 @@ exec :: (
 
     $code: Code                        = #code,null, // Option 1: for each row, run this code
 
-    $callback: Callback                = null,       // Option 2: for each row, invoke this callback
-    first_callback_arg: *void          = null,       //           with this argument,
-    $only_use_first_callback_argument := true,       //           & the rest from exec() if you want
+    //$callback: Callback                = null,       // Option 2: for each row, invoke this callback
+    //first_callback_arg: *void          = null,       //           with this argument,
+    //$only_use_first_callback_argument := true,       //           & the rest from exec() if you want
 
     $ignore_returned_rows             := false       // Option 3: ignore returned rows
 ) -> Result
-#modify { if code != #code,null || callback != null then ignore_returned_rows = true; return true; }
+#modify { if code != #code,null /*|| callback != null*/ then ignore_returned_rows = true; return true; }
 #expand {
     result, statement := prepare(sql);
     if result != .OK then return result;
 
-    parameter_count := bind_parameter_count(statement);
-    assert(parameter_count == params.count, "Mismatch between number of params passed in [%1] and the number of question marks in the SQL string [%2]",
-    /* 1 */ params.count,
-    /* 2 */ parameter_count
+    parameter_count_passed_in := params.count;
+    parameter_count_in_sql := bind_parameter_count(statement);
+    assert(parameter_count_passed_in == parameter_count_in_sql, "Mismatch between number of params passed in [%1 (%4)] and the number of question marks in the SQL string [%2]\n%3",
+    /* 1 */ parameter_count_passed_in,
+    /* 2 */ parameter_count_in_sql,
+    /* 3 */ sql,
+    /* 4 */ params.count
     );
 
     param_number: s32 = 1;
@@ -125,7 +128,7 @@ exec :: (
     for statement {
         assert(ignore_returned_rows);
         #if code != #code,null then #insert,scope() code;
-        #if callback != null {
+        /*#if callback != null {
             #if only_use_first_callback_argument {
                 callback(callback_arg, column_count(statement), null, null);
             }
@@ -133,7 +136,7 @@ exec :: (
                 #run log("WARNING: only_use_first_callback_argument=false is not supported right now!");
                 callback(callback_arg, column_count(statement), null, null); // TODO: implement the other two arguments, *maybe*?
             }
-        }
+        }*/
     }
     if should_return then return result;
 
@@ -190,6 +193,15 @@ step :: (statement: Statement) -> Result {
 finalize :: (statement: Statement) -> Result {
     #if VERBOSE then verbose_end();
     return cast(Result) sqlite3_finalize(statement);
+}
+sql :: (statement: Statement) -> string {
+    return copy_temporary_string(to_string(cast(*u8) sqlite3_sql(statement)));
+}
+#scope_file
+_sql :: sql;
+#scope_export
+expanded_sql :: (statement: Statement) -> string {
+    return copy_temporary_string(to_string(cast(*u8) sqlite3_expanded_sql(statement)));
 }
 column_count :: (statement: Statement) -> s32 {
     return sqlite3_column_count(statement);
@@ -282,17 +294,15 @@ serializable_members_of :: ($type: Type) -> [..] Type_Info_Struct_Member {
     return serializable_members_of(cast(*Type_Info_Struct) type_info(type));
 }
 
-serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Member {
-    NOTE_DO_NOT_SERIALIZE :: "do_not_serialize";
-    assert(#compile_time);
+serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Member { assert(#compile_time);
     members: [..] Type_Info_Struct_Member;
     for member: info.members {
         is_a_valid_type := is_serializable(member.type);
         #if USE_ORM || FROM_METAPROGRAM { if is_a_model(info) && member_is_foreign_key(member) then is_a_valid_type = true; }
         if !is_a_valid_type then continue;
         #if USE_ORM || FROM_METAPROGRAM {
-            has_do_not_serialize_note := false;
-            for member.notes if it == NOTE_DO_NOT_SERIALIZE then continue member;
+            for member.notes if it == NOTE_DO_NOT_SERIALIZE ||
+                                it == NOTE_FETCH    then continue member;
         }
         array_add(*members, member);
     }
@@ -392,6 +402,13 @@ XX,     /* 1 */ var_name,
 #if VERBOSE {
     #import "Print_Color";
     #import "String";
+    COLOR_SCHEME :: struct {
+        QUERY_TEXT      :: Console_Color.MAGENTA;
+        QUERY_PARAMETER :: Console_Color.HI_CYAN;
+        QUERY_RULER     :: Console_Color.BG_BLUE;
+        OPEN_FOR_NAME   :: Console_Color.YELLOW;
+        OPEN_FOR_RULER  :: Console_Color.BG_YELLOW;
+    }
     #add_context sqlite_verbose: struct {
         statement: string;
         parameter_count: int;
@@ -423,13 +440,13 @@ XX,     /* 1 */ var_name,
         parameter_index := 0;
         for split(statement, "\n") {
             if open_for_begin != .{} {
-                print_color(" ", color=.BG_HI_YELLOW);
+                print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
             }
-            print_color(" ", color=.BG_BLUE);
+            print_color(" ", color=COLOR_SCHEME.QUERY_RULER);
             write_string(" ");
             for split(it, "?") {
-                with_console_color(.MAGENTA, write_string(trim_left(it, "0123456789")));
-                if parameter_index < parameter_count then with_console_color(.CYAN, write_string(parameters[it_index]));
+                with_console_color(COLOR_SCHEME.QUERY_TEXT, write_string(trim_left(it, "0123456789")));
+                if parameter_index < parameter_count then with_console_color(COLOR_SCHEME.QUERY_PARAMETER, write_string(parameters[it_index]));
                 parameter_index += 1;
             }
             write_string("\n");
@@ -441,16 +458,16 @@ XX,     /* 1 */ var_name,
         using context.sqlite_verbose;
         open_for_begin = current_time_monotonic();
         write_string("\n");
-        print_color(" ", color=.BG_YELLOW);
-        print_color(" %\n", ifx name else "(unnamed block)", color=.YELLOW);
+        print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
+        print_color(" %\n", ifx name else "(unnamed block)", color=COLOR_SCHEME.OPEN_FOR_NAME);
     }
     verbose_end\ _open_for :: (name: string) {
         using context.sqlite_verbose;
         end := current_time_monotonic();
         seconds := cast(float) to_nanoseconds(end-open_for_begin) / cast(float) 1_000_000_000;
-        print_color(" ", color=.BG_YELLOW);
-        print_color(" %\n", ifx name else "(unnamed block)", color=.YELLOW);
-        print_color("    % seconds ", seconds, color=Console_Color.BG_YELLOW);
+        print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
+        print_color(" %\n", ifx name else "(unnamed block)", color=COLOR_SCHEME.OPEN_FOR_NAME);
+        print_color("    % seconds ", seconds, color=COLOR_SCHEME.OPEN_FOR_RULER);
         write_string("\n\n");
         open_for_begin = .{};
     }

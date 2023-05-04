@@ -97,7 +97,8 @@ XX), #string XX
 __flush_database_cache :: (reinit := true) {
     using context.db_cache;
 XX, iterate_model_names(#string XX
-    deinit(*_%1); if reinit then init(*_%1); // this is probably dumb
+    table_reset(*_%1); //TODO: fix this dumb stopgap measure
+    if _%1.allocated > 0 { deinit(*_%1); if reinit then init(*_%1); }
 XX), #string XX
 }
 TABLE_SCHEMAS :: string.[

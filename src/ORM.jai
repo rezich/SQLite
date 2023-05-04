@@ -12,38 +12,18 @@ Cached(T)
     for example:
         author: Cached(User); @on_update=SET_NULL @on_delete=SET_DEFAULT
 
-
-init(filename)
-    open the database
-    filename is optional; uses in-memory database if omitted
-fini()
-    close the database
-
-insert(obj)
-    insert Model-"derived" object into the database
-set(cached_obj, field_name, value)
-    set the given field of the given cached object to the given value & save
-update(cached_obj)
-    save the entire cached object to the database
-select_by_id(T, id)
-    fetch a specific row by model and id number
-select_from(T, where, ..params, limit=0, offset=0, allocator=temp)
-    lookup an object in the database, save it to the cache, return a Cached(T)
-    where, limit, and offset are optional, but must be constant
-delete(*cached_obj)
-    delete a cached database object from the database
-
-fetch(*cached_obj)
-    fetch the object from the database
-
 is_fetched(cached_obj)
     returns whether or not the object exists in the local database cache
 is_null(cached_obj)
     returns whether or not the object "is a null reference" (fetch_id == 0)
 flush_cache()
-    flush the local database cache
+    flush the database cache in the context
 
 */
+
+NOTE_DO_NOT_SERIALIZE :: "do_not_serialize";
+NOTE_AUTOFETCH        :: "autofetch";
+NOTE_FETCH            :: "fetch";
 
 Model :: struct {
     id: s64;
@@ -216,19 +196,31 @@ XX,         );
 
 // update :: ($type: Type, set: string, where: string, ..params: Any)
 
-select_by_id :: ($T: Type, id: s64) -> Cached(T)
+select_by_id :: ($T: Type, id: s64, $fetch := "") -> Cached(T)
 #modify { return is_a_model(T); } {
-    return select_from(T, where="id = ?", id, limit=1); //TODO: these three lines one
+    return select_from(T, where="id = ?", id, limit=1, fetch=fetch); //TODO: these three lines one
 }
 
-select_from :: ($T: Type, $where := "", params: ..Any, $limit := 0, $offset := 0, allocator := temp) -> [..] Cached(T)
-#modify { return is_a_model(T) && limit != 1; } {
+select_from :: (
+    $T         :  Type, // must be $T/Model
+    $where     := "",
+     params    :  ..Any,
+    $limit     := 0,    // must not be 1
+     offset    := 0,
+    $fetch     := "",
+     allocator := temp
+) -> [..] Cached(T)
+#modify { return is_a_model(T) && limit != 1;} {
     SQL_STATEMENT :: #run generate_sql_statement_for_select_from();
 
     rows: [..] Cached(T);
     rows.allocator = allocator;
 
-    result := exec(SQL_STATEMENT, ..params, code=#code {
+    new_params: [..] Any;
+    array_copy(*new_params, params);
+    if limit then array_add(*new_params, offset);
+
+    result := exec(SQL_STATEMENT, ..new_params, code=#code {
         obj: `T;
         fetch_row(*obj, statement);
         #insert #run sprint(#string XX
@@ -237,24 +229,73 @@ XX,     /* 1 */ `T);
         array_add(*`rows, .{obj.id, pointer});
     });
     assert_ok(result);
+    array_free(new_params);
+
+    // this is almost certainly not the best way to do this but it works for now
+    #if fetch != "" then for * row: rows { #insert -> string {
+        sb: String_Builder;
+        for fetch_member_name: split(fetch, ",") {
+            found := false;
+            for type_info(T).members if it.name == fetch_member_name && member_is_foreign_key(it) { found = true; break; }
+            assert(found, "could not fetch member %1 of %2",
+            /* 1 */ fetch_member_name,
+            /* 2 */ T
+            );
+            print_to_builder(*sb, #string XX
+            _fetch(*row.%1);
+XX,             /* 1 */ fetch_member_name);
+        }
+        return builder_to_string(*sb);
+    }}
+
     return rows;
 }
 
-select_from :: ($T: Type, $where := "", params: ..Any, $limit := 0, $offset := 0) -> Cached(T)
+select_from :: (
+    $T      :  Type, // must be $T/Model
+    $where  := "",
+     params :  ..Any,
+    $limit  := 0,    // must be 1
+     offset := 0,
+    $fetch  := ""
+) -> Cached(T)
 #modify { return is_a_model(T) && limit == 1; } {
     SQL_STATEMENT :: #run generate_sql_statement_for_select_from();
 
     obj: T;
-    pointer: *T;
+    obj_pointer: *T;
 
-    result := exec(SQL_STATEMENT, ..params, code=#code {
+    new_params: [..] Any;
+    array_copy(*new_params, params);
+    array_add(*new_params, offset);
+
+    result := exec(SQL_STATEMENT, ..new_params, code=#code {
         fetch_row(*`obj, statement);
         #insert #run sprint(#string XX
-        `pointer = table_set(*context.db_cache._%1, `obj.id, `obj);
+        `obj_pointer = table_set(*context.db_cache._%1, `obj.id, `obj);
 XX,     /* 1 */ `T);
     });
     assert_ok(result);
-    return .{obj.id, pointer};
+    array_free(new_params);
+
+    // this is almost certainly not the best way to do this but it works for now
+    #if fetch != "" then #insert -> string {
+        sb: String_Builder;
+        for fetch_member_name: split(fetch, ",") {
+            found := false;
+            for type_info(T).members if it.name == fetch_member_name && member_is_foreign_key(it) { found = true; break; }
+            assert(found, "could not fetch member %1 of %2",
+            /* 1 */ fetch_member_name,
+            /* 2 */ T
+            );
+            print_to_builder(*sb, #string XX
+        _fetch(*obj_pointer.%1);
+XX,         /* 1 */ fetch_member_name);
+        }
+        return builder_to_string(*sb);
+    }
+
+    return .{obj.id, obj_pointer};
 }
 
 delete :: (using cached_obj: *$T/Cached) {
@@ -277,6 +318,9 @@ fetch :: (cached: *$T/Cached) {
     assert(cached.fetch_id != 0);
     cached.pointer = select_by_id(T.type, cached.fetch_id).pointer;
 }
+#scope_file
+_fetch :: fetch;
+#scope_export
 
 is_a_model :: inline x => (#import "Compiler").is_subclass_of(cast(*Type_Info) x, "Model");
 
@@ -305,6 +349,7 @@ flush_cache :: inline (reinit := true) { __flush_database_cache(reinit); } // :P
 
 #scope_file
 
+
 generate_sql_statement_for_select_from :: () -> string #expand {
     sb: String_Builder;
     for serializable_members_of(`T) {
@@ -312,11 +357,12 @@ generate_sql_statement_for_select_from :: () -> string #expand {
         append(*sb, it.name);
         if member_is_foreign_key(it) then append(*sb, "_id");
     }
-    return sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2%3%4%5;",
+    x := sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2%3%4%5;",
     /* 1 */ builder_to_string(*sb),
     /* 2 */ `T,
-    /* 3 */ ifx `where  then sprint(" WHERE %" , `where ),
-    /* 4 */ ifx `limit  then sprint(" LIMIT %" , `limit ),
-    /* 5 */ ifx `offset then sprint(" OFFSET %", `offset)
+    /* 3 */ ifx `where then sprint(" WHERE %" , `where ),
+    /* 4 */ ifx `limit then sprint(" LIMIT %" , `limit ),
+    /* 5 */ ifx `limit then        " OFFSET ?"
     );
+    return x;
 }
