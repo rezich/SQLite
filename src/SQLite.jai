@@ -97,11 +97,12 @@ exec :: (
 
     parameter_count_passed_in := params.count;
     parameter_count_in_sql := bind_parameter_count(statement);
-    assert(parameter_count_passed_in == parameter_count_in_sql, "Mismatch between number of params passed in [%1 (%4)] and the number of question marks in the SQL string [%2]\n%3",
+    assert(parameter_count_passed_in == parameter_count_in_sql, "Mismatch between number of params passed in [%1 (%4)] and the number of question marks in the SQL string [%2]\n%3\n\nparams: %5",
     /* 1 */ parameter_count_passed_in,
     /* 2 */ parameter_count_in_sql,
     /* 3 */ sql,
-    /* 4 */ params.count
+    /* 4 */ params.count,
+    /* 5 */ params
     );
 
     param_number: s32 = 1;

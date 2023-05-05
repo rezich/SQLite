@@ -200,6 +200,7 @@ XX,         );
 
 
 #scope_file
+
 Select_From_Exec_Body :: #code {
     fetch_row(*`obj, statement);
     #insert #run sprint(#string XX
@@ -248,6 +249,26 @@ XX,     /* 1 */ it);
         return builder_to_string(*sb);
     };
 };
+
+generate_sql_statement_for_select_from :: () -> string #expand {
+    sb: String_Builder;
+    for serializable_members_of(`T) {
+        if it_index != 0 then append(*sb, ", ");
+        append(*sb, it.name);
+        if member_is_foreign_key(it) then append(*sb, "_id");
+    }
+    x := sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2%3%4%5%6;",
+    /* 1 */ builder_to_string(*sb),
+    /* 2 */ `T,
+    /* 3 */ ifx `where then sprint(" WHERE %" ,     `where ),
+    /* 4 */ ifx `order_by.expr != ""
+                       then sprint(" ORDER BY % %", `order_by.expr, `order_by.dir),
+    /* 5 */ ifx `limit then sprint(" LIMIT %" ,     `limit ),
+    /* 6 */ ifx `limit then        " OFFSET ?"
+    );
+    return x;
+}
+
 #scope_export
 
 
@@ -255,12 +276,14 @@ select_from :: (
     $T         :  Type, // must be $T/Model
     $where     := "",
      params    :  ..Any,
+    //$order_by : struct { expr: string; dir: enum { ASC; DESC; } } = .{"", .ASC},
+    $order_by  :  Order_By = .{},
     $limit     := 0,    // must not be 1
      offset    := 0,
     $fetch     := "",
      allocator := temp
 ) -> [..] Cached(T)
-#modify { return is_a_model(T) && limit != 1;} {
+#modify { return is_a_model(T) && limit != 1; } {
     SQL_STATEMENT :: #run generate_sql_statement_for_select_from();
 
     rows: [..] Cached(T); rows.allocator = allocator;
@@ -282,12 +305,14 @@ select_from :: (
 
 
 select_from :: (
-    $T      :  Type, // must be $T/Model
-    $where  := "",
-     params :  ..Any,
-    $limit  := 0,    // must be 1
-     offset := 0,
-    $fetch  := ""
+    $T        :  Type, // must be $T/Model
+    $where    := "",
+     params   :  ..Any,
+    //$order_by : struct { expr: string; dir: enum { ASC; DESC; } } = .{"", .ASC},
+    $order_by  :  Order_By = .{},
+    $limit    := 0,    // must be 1
+     offset   := 0,
+    $fetch    := ""
 ) -> Cached(T)
 #modify { return is_a_model(T) && limit == 1; } {
     SQL_STATEMENT :: #run generate_sql_statement_for_select_from();
@@ -312,6 +337,11 @@ select_by_id :: inline ($T: Type, id: s64, $fetch := "") -> Cached(T)
 #modify { return is_a_model(T); }
 { return select_from(T, where="id = ?", id, limit=1, fetch=fetch); }
 
+
+Order_By :: struct {
+    expr: string = "";
+    dir:  enum { ASC; DESC; } = .ASC;
+}
 
 
 
@@ -381,6 +411,12 @@ member_is_do_not_serialize :: (member: Type_Info_Struct_Member) -> bool {
     return false;
 }
 
+is_internal_field_name :: (field_name: string) -> bool {
+    return  field_name == "id"      ||
+            field_name == "created" ||
+            field_name == "modified";
+}
+
 is_fetched :: inline (using cached: $T/Cached) -> bool { return pointer != null; }
 is_null    :: inline (using cached: $T/Cached) -> bool { return fetch_id == 0;   }
 
@@ -392,21 +428,3 @@ reset_model_cache :: inline (reinit := true) { __reset_model_cache(reinit); } //
 
 
 #scope_file
-
-
-generate_sql_statement_for_select_from :: () -> string #expand {
-    sb: String_Builder;
-    for serializable_members_of(`T) {
-        if it_index != 0 then append(*sb, ", ");
-        append(*sb, it.name);
-        if member_is_foreign_key(it) then append(*sb, "_id");
-    }
-    x := sprint("SELECT id, strftime(\"%%s\", created), strftime(\"%%s\", modified), %1 FROM %2%3%4%5;",
-    /* 1 */ builder_to_string(*sb),
-    /* 2 */ `T,
-    /* 3 */ ifx `where then sprint(" WHERE %" , `where ),
-    /* 4 */ ifx `limit then sprint(" LIMIT %" , `limit ),
-    /* 5 */ ifx `limit then        " OFFSET ?"
-    );
-    return x;
-}
