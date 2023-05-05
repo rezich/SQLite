@@ -127,6 +127,7 @@ exec :: (
     should_return := false;
     for statement {
         assert(ignore_returned_rows);
+        statement_scope : Code : #this; // very cool if this wroks
         #if code != #code,null then #insert,scope() code;
         /*#if callback != null {
             #if only_use_first_callback_argument {

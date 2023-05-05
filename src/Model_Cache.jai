@@ -196,10 +196,60 @@ XX,         );
 
 // update :: ($type: Type, set: string, where: string, ..params: Any)
 
-select_by_id :: ($T: Type, id: s64, $fetch := "") -> Cached(T)
-#modify { return is_a_model(T); } {
-    return select_from(T, where="id = ?", id, limit=1, fetch=fetch); //TODO: these three lines one
-}
+
+
+
+#scope_file
+Select_From_Exec_Body :: #code {
+    fetch_row(*`obj, statement);
+    #insert #run sprint(#string XX
+    `obj_pointer = table_set(*context.sqlite_model_cache._%1, `obj.id, `obj);
+XX, /* 1 */ `T);
+    `cached_obj = .{`obj.id, `obj_pointer};
+
+    #insert -> string {
+        sb: String_Builder;
+        fetches_and_autofetches: [..] string;
+
+        // get members with @autofetch
+        for member: type_info(`T).members {
+            is_autofetch             := field_is_autofetch       (`T, member.name);
+            is_foreign_key           := field_is_foreign_key     (`T, member.name);
+            is_able_to_be_serialized := is_serializable(member.type);
+            is_do_not_serialize      := field_is_do_not_serialize(`T, member.name);
+            if is_autofetch {
+                if (is_foreign_key || is_serializable) && !is_do_not_serialize then array_add(*fetches_and_autofetches, member.name);
+                else assert(false, "%1 member %2 is not fetchable!",
+                /* 1 */ `T,
+                /* 2 */ member.name);
+            }
+        }
+    
+        // handle members passed in through fetch=xxx,yyy,... parameter in select_from()
+        split_fetch_names := split(`fetch, ",");
+        if split_fetch_names[0] != "" then for fetch_member_name: split_fetch_names {
+            found := false;
+            for type_info(`T).members if it.name == fetch_member_name && member_is_foreign_key(it) { found = true; break; }
+            assert(found, "could not fetch member %1 of %2 [%3]",
+            /* 1 */ fetch_member_name,
+            /* 2 */ `T,
+            /* 3 */ `fetch
+            );
+            if !array_add_if_unique(*fetches_and_autofetches, fetch_member_name) log("WARNING: requested fetch for %1, but it's @autofetch in %2!", //TODO: filename & line number
+            /* 1 */ fetch_member_name,
+            /* 2 */ `T
+            );
+        }
+
+        for fetches_and_autofetches print_to_builder(*sb, #string XX
+    `_fetch(*`cached_obj.%1);
+XX,     /* 1 */ it);
+
+        return builder_to_string(*sb);
+    };
+};
+#scope_export
+
 
 select_from :: (
     $T         :  Type, // must be $T/Model
@@ -213,43 +263,23 @@ select_from :: (
 #modify { return is_a_model(T) && limit != 1;} {
     SQL_STATEMENT :: #run generate_sql_statement_for_select_from();
 
-    rows: [..] Cached(T);
-    rows.allocator = allocator;
+    rows: [..] Cached(T); rows.allocator = allocator;
+    obj_pointer: *T;
+    obj: T;
+    cached_obj: Cached(T);
 
-    new_params: [..] Any;
-    array_copy(*new_params, params);
-    if limit then array_add(*new_params, offset);
+    new_params: [..] Any; new_params.allocator = temp;
+    array_copy(*new_params, params); if limit then array_add(*new_params, offset);
 
     result := exec(SQL_STATEMENT, ..new_params, code=#code {
-        obj: `T;
-        fetch_row(*obj, statement);
-        #insert #run sprint(#string XX
-        pointer := table_set(*context.sqlite_model_cache._%1, obj.id, obj);
-XX,     /* 1 */ `T);
-        array_add(*`rows, .{obj.id, pointer});
+        #insert,scope(statement_scope) `Select_From_Exec_Body;
+        array_add(*`rows, .{`obj.id, `obj_pointer});
     });
     assert_ok(result);
-    array_free(new_params);
-
-    // this is almost certainly not the best way to do this but it works for now
-    #if fetch != "" then for * row: rows { #insert -> string {
-        sb: String_Builder;
-        for fetch_member_name: split(fetch, ",") {
-            found := false;
-            for type_info(T).members if it.name == fetch_member_name && member_is_foreign_key(it) { found = true; break; }
-            assert(found, "could not fetch member %1 of %2",
-            /* 1 */ fetch_member_name,
-            /* 2 */ T
-            );
-            print_to_builder(*sb, #string XX
-            _fetch(*row.%1);
-XX,             /* 1 */ fetch_member_name);
-        }
-        return builder_to_string(*sb);
-    }}
 
     return rows;
 }
+
 
 select_from :: (
     $T      :  Type, // must be $T/Model
@@ -262,41 +292,28 @@ select_from :: (
 #modify { return is_a_model(T) && limit == 1; } {
     SQL_STATEMENT :: #run generate_sql_statement_for_select_from();
 
-    obj: T;
     obj_pointer: *T;
+    obj: T;
+    cached_obj: Cached(T);
 
-    new_params: [..] Any;
-    array_copy(*new_params, params);
-    array_add(*new_params, offset);
+    new_params: [..] Any; new_params.allocator = temp;
+    array_copy(*new_params, params); array_add(*new_params, offset);
 
-    result := exec(SQL_STATEMENT, ..new_params, code=#code {
-        fetch_row(*`obj, statement);
-        #insert #run sprint(#string XX
-        `obj_pointer = table_set(*context.sqlite_model_cache._%1, `obj.id, `obj);
-XX,     /* 1 */ `T);
-    });
+    result := exec(SQL_STATEMENT, ..new_params, code=/*#code {
+        #insert,scope(statement_scope) `*/Select_From_Exec_Body//;
+    /*}*/);
     assert_ok(result);
-    array_free(new_params);
 
-    // this is almost certainly not the best way to do this but it works for now
-    #if fetch != "" then #insert -> string {
-        sb: String_Builder;
-        for fetch_member_name: split(fetch, ",") {
-            found := false;
-            for type_info(T).members if it.name == fetch_member_name && member_is_foreign_key(it) { found = true; break; }
-            assert(found, "could not fetch member %1 of %2",
-            /* 1 */ fetch_member_name,
-            /* 2 */ T
-            );
-            print_to_builder(*sb, #string XX
-        _fetch(*obj_pointer.%1);
-XX,         /* 1 */ fetch_member_name);
-        }
-        return builder_to_string(*sb);
-    }
-
-    return .{obj.id, obj_pointer};
+    return cached_obj;
 }
+
+
+select_by_id :: inline ($T: Type, id: s64, $fetch := "") -> Cached(T)
+#modify { return is_a_model(T); }
+{ return select_from(T, where="id = ?", id, limit=1, fetch=fetch); }
+
+
+
 
 delete :: (using cached_obj: *$T/Cached) {
     SQL_STATEMENT :: #run sprint("DELETE FROM % WHERE id = ?;", T.type);
@@ -324,7 +341,8 @@ _fetch :: fetch;
 
 is_a_model :: inline x => (#import "Compiler").is_subclass_of(cast(*Type_Info) x, "Model");
 
-field_is_foreign_key :: ($type: Type, $field_name: string) -> bool {
+field_is_foreign_key :: ($type: Type, field_name: string) -> bool {
+    assert(#compile_time);
     for serializable_members_of(type) if it.name == field_name return member_is_foreign_key(it);
     return false;
 }
@@ -338,6 +356,31 @@ get_foreign_key_name_from :: (member: Type_Info_Struct_Member, model_name: strin
     return (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_info.constant_storage[member_info.specified_parameters[0].offset_into_constant_storage]).name; // thanks, shwa!
 }
 
+has_autofetches :: ($T: Type) -> bool {
+    for type_info(T).members if member_is_autofetch(it) then return true;
+    return false;
+}
+
+field_is_autofetch :: ($T: Type, field_name: string) -> bool {
+    assert(#compile_time);
+    for type_info(T).members if it.name == field_name return member_is_autofetch(it);
+    return false;
+}
+member_is_autofetch :: (member: Type_Info_Struct_Member) -> bool {
+    for member.notes if it == NOTE_AUTOFETCH then return true;
+    return false;
+}
+
+field_is_do_not_serialize :: ($T: Type, field_name: string) -> bool {
+    assert(#compile_time);
+    for type_info(T).members if it.name == field_name then return member_is_do_not_serialize(it);
+    return false;
+}
+member_is_do_not_serialize :: (member: Type_Info_Struct_Member) -> bool {
+    for member.notes if it == NOTE_DO_NOT_SERIALIZE then return true;
+    return false;
+}
+
 is_fetched :: inline (using cached: $T/Cached) -> bool { return pointer != null; }
 is_null    :: inline (using cached: $T/Cached) -> bool { return fetch_id == 0;   }
 
@@ -346,6 +389,7 @@ reset_model_cache :: inline (reinit := true) { __reset_model_cache(reinit); } //
 
 
 #import "Hash_Table";
+
 
 #scope_file
 
