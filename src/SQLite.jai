@@ -27,7 +27,7 @@ set_pragmas :: (new_pragmas: [] string) -> Result {
     if is_open {
         assert(false, "(maybe don't do this just yet though)");
         for new_pragmas {
-            // it seem weird that it appends the pragmas if the database is open...
+            // it seems weird that it appends the pragmas if the database is open...
             result = exec(tprint("PRAGMA %;", it));
             if result != .OK then return result;
             array_add(*pragmas, it);
@@ -79,25 +79,20 @@ close :: () -> Result {
 // this version of exec is not actually SQLite's exec,
 // but it does the same thing, just without a callback function
 exec :: (
-    sql:   string, // the SQL statement
-    params: ..Any, // parameters to bind
-
-    $code: Code                        = #code,null, // Option 1: for each row, run this code
-
-    //$callback: Callback                = null,       // Option 2: for each row, invoke this callback
-    //first_callback_arg: *void          = null,       //           with this argument,
-    //$only_use_first_callback_argument := true,       //           & the rest from exec() if you want
-
-    $ignore_returned_rows             := false       // Option 3: ignore returned rows
+    sql: string,                   // the SQL statement
+    params: ..Any,                 // parameters to bind
+    $code: Code = #code,null,      // run this code for each returned row
+    $ignore_returned_rows := false // ignore returned rows
 ) -> Result
-#modify { if code != #code,null /*|| callback != null*/ then ignore_returned_rows = true; return true; }
+#modify { if code != #code,null then ignore_returned_rows = true; return true; }
 #expand {
     result, statement := prepare(sql);
     if result != .OK then return result;
 
     parameter_count_passed_in := params.count;
     parameter_count_in_sql := bind_parameter_count(statement);
-    assert(parameter_count_passed_in == parameter_count_in_sql, "Mismatch between number of params passed in [%1 (%4)] and the number of question marks in the SQL string [%2]\n%3\n\nparams: %5",
+    assert(parameter_count_passed_in == parameter_count_in_sql,
+        "Mismatch between number of params passed in [%1 (%4)] and the number of question marks in the SQL string [%2]\n%3\n\nparams: %5",
     /* 1 */ parameter_count_passed_in,
     /* 2 */ parameter_count_in_sql,
     /* 3 */ sql,
@@ -128,17 +123,8 @@ exec :: (
     should_return := false;
     for statement {
         assert(ignore_returned_rows);
-        statement_scope : Code : #this; // very cool if this works
+        STATEMENT_SCOPE : Code : #this; // very cool that this works
         #if code != #code,null then #insert,scope() code;
-        /*#if callback != null {
-            #if only_use_first_callback_argument {
-                callback(callback_arg, column_count(statement), null, null);
-            }
-            else {
-                #run log("WARNING: only_use_first_callback_argument=false is not supported right now!");
-                callback(callback_arg, column_count(statement), null, null); // TODO: implement the other two arguments, *maybe*?
-            }
-        }*/
     }
     if should_return then return result;
 
@@ -401,85 +387,6 @@ XX,     /* 1 */ var_name,
 
 #scope_file
 
-#if VERBOSE {
-    #import "Print_Color";
-    #import "String";
-    COLOR_SCHEME :: struct {
-        QUERY_TEXT      :: Console_Color.MAGENTA;
-        QUERY_PARAMETER :: Console_Color.HI_CYAN;
-        QUERY_RULER     :: Console_Color.BG_BLUE;
-        OPEN_FOR_NAME   :: Console_Color.YELLOW;
-        OPEN_FOR_RULER  :: Console_Color.BG_YELLOW;
-    }
-    MINIMUM_OPEN_FOR_HEADER_AND_FOOTER_WIDTH :: 40;
-    #add_context sqlite_verbose: struct {
-        statement: string;
-        parameter_count: int;
-        parameters: [100] string;
-        open_for_begin: Apollo_Time;
-    };
-    verbose_begin :: (statement: string) {
-        context.sqlite_verbose.statement = statement;
-    }
-    verbose_bind :: (param: $T) {
-        using context.sqlite_verbose;
-        #if #run type_info(T).type == .ENUM    then
-            parameters[parameter_count] = tprint("% [%]", cast,force(s64) param, param);
-        else
-        #if #run type_info(T).type == .POINTER then
-            parameters[parameter_count] = "NULL";
-        else
-        #if #run type_info(T).type == .BOOL    then
-            parameters[parameter_count] = tprint("% [%]", ifx param then 1, ifx param then "TRUE" else "FALSE");
-        else
-        #if #run type_info(T).type == .STRING  then
-            parameters[parameter_count] = tprint("\"%\"", param);
-        else
-            parameters[parameter_count] = tprint("%", param);
-        parameter_count += 1;
-    }
-    verbose_end :: () {
-        using context.sqlite_verbose;
-        parameter_index := 0;
-        for split(statement, "\n") {
-            if open_for_begin != .{} {
-                print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
-            }
-            print_color(" ", color=COLOR_SCHEME.QUERY_RULER);
-            write_string(" ");
-            for split(it, "?") {
-                with_console_color(COLOR_SCHEME.QUERY_TEXT, write_string(trim_left(it, "0123456789")));
-                if parameter_index < parameter_count then with_console_color(COLOR_SCHEME.QUERY_PARAMETER, write_string(parameters[it_index]));
-                parameter_index += 1;
-            }
-            write_string("\n");
-        }
-        parameter_count = 0;
-        statement = "";
-    }
-    verbose_begin_open_for :: (name: string) {
-        using context.sqlite_verbose;
-        open_for_begin = current_time_monotonic();
-        write_string("\n");
-        for 0..max(MINIMUM_OPEN_FOR_HEADER_AND_FOOTER_WIDTH, name.count+2) print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER); write_string("\n");
-        print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
-        print_color(" %\n", ifx name else "(unnamed block)", color=COLOR_SCHEME.OPEN_FOR_NAME);
-    }
-    
-    verbose_end\ _open_for :: (name: string) {
-        using context.sqlite_verbose;
-        end := current_time_monotonic();
-        seconds := cast(float) to_nanoseconds(end-open_for_begin) / cast(float) 1_000_000_000;
-        print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER); write_string("\n");
-        print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
-        print_color(" %\n", ifx name else "(unnamed block)", color=COLOR_SCHEME.OPEN_FOR_NAME);
-        beginning_of_footer := tprint("    % seconds ", seconds);
-        with_console_color(COLOR_SCHEME.OPEN_FOR_RULER, write_string(beginning_of_footer));
-        for 0..max(MINIMUM_OPEN_FOR_HEADER_AND_FOOTER_WIDTH, name.count+2)-beginning_of_footer.count print_color(" ", color=COLOR_SCHEME.OPEN_FOR_RULER);
-
-        write_string("\n\n");
-        open_for_begin = .{};
-    }
-}
+#if VERBOSE then #load "Verbose.jai";
 
 #import "Basic";

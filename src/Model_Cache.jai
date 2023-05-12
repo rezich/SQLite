@@ -211,6 +211,7 @@ XX, /* 1 */ `T);
     #insert -> string {
         sb: String_Builder;
         fetches_and_autofetches: [..] string;
+        fetches_and_autofetches_fk: [..] bool;
         autofetches_that_use_procs: [..] string;
 
         // get members with @autofetch
@@ -220,7 +221,10 @@ XX, /* 1 */ `T);
             is_able_to_be_serialized := is_serializable(member.type);
             is_do_not_serialize      := field_is_do_not_serialize(`T, member.name);
             if is_autofetch {
-                if (is_foreign_key || is_serializable) && !is_do_not_serialize then array_add(*fetches_and_autofetches, member.name);
+                if (is_foreign_key || is_serializable) && !is_do_not_serialize {
+                    array_add(*fetches_and_autofetches, member.name);
+                    array_add(*fetches_and_autofetches_fk, is_foreign_key);
+                }
                 else if is_do_not_serialize then array_add(*autofetches_that_use_procs, member.name);
                 else assert(false, "%1 member %2 is not fetchable!",
                 /* 1 */ `T,
@@ -238,15 +242,19 @@ XX, /* 1 */ `T);
             /* 2 */ `T,
             /* 3 */ `fetch
             );
-            if !array_add_if_unique(*fetches_and_autofetches, fetch_member_name) log("WARNING: requested fetch for %1, but it's @autofetch in %2!", //TODO: filename & line number
+            if array_add_if_unique(*fetches_and_autofetches, fetch_member_name) then array_add(*fetches_and_autofetches_fk, true);
+            else log("WARNING: requested fetch for %1, but it's @autofetch in %2!", //TODO: filename & line number
             /* 1 */ fetch_member_name,
             /* 2 */ `T
             );
         }
 
+        assert(fetches_and_autofetches.count == fetches_and_autofetches_fk.count);
+
         for fetches_and_autofetches print_to_builder(*sb, #string XX
-    `_fetch(*`cached_obj.%1);
-XX,     /* 1 */ it);
+    %1`_fetch(*`cached_obj.%2);
+XX,     /* 1 */ ifx fetches_and_autofetches_fk[it_index] then tprint("if !is_fetched(`cached_obj.%1) then ", it),
+        /* 2 */ it);
         for autofetches_that_use_procs print_to_builder(*sb, #string XX
     `T.fetch_%1(*`cached_obj);
 XX,     /* 1 */ it);
@@ -298,7 +306,7 @@ select_from :: (
     array_copy(*new_params, params); if limit then array_add(*new_params, offset);
 
     result := exec(SQL_STATEMENT, ..new_params, code=#code {
-        #insert,scope(statement_scope) `Select_From_Exec_Body;
+        #insert,scope(STATEMENT_SCOPE) `Select_From_Exec_Body;
         array_add(*`rows, .{`obj.id, `obj_pointer});
     });
     assert_ok(result);
@@ -326,9 +334,7 @@ select_from :: (
     new_params: [..] Any; new_params.allocator = temp;
     array_copy(*new_params, params); array_add(*new_params, offset);
 
-    result := exec(SQL_STATEMENT, ..new_params, code=/*#code {
-        #insert,scope(statement_scope) `*/Select_From_Exec_Body//;
-    /*}*/);
+    result := exec(SQL_STATEMENT, ..new_params, code=Select_From_Exec_Body);
     assert_ok(result);
 
     return cached_obj;

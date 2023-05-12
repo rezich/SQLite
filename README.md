@@ -4,8 +4,6 @@ This is a module for Jai that allows you to interface with SQLite however works 
 
 **However, this module is still in early development and lacks rigorous testing & some features.**
 
-***This module is heavily under construction right now!!***
-
 
 
 
@@ -26,17 +24,39 @@ Unless you `#import "SQLite"(ONLY_C_BINDINGS=true)`, you also get [a more Jai-fr
 The database handle parameter is omitted from every wrapping procedure signature, as it is stored in
 the `context` instead.
 
-**The following part is under construction.**
+Instead of wrapping `sqlite3_exec()` as `exec()`, a more Jai-friendly `exec()` is provided:
 
-~~Included in this wrapper is a variant of `exec()` that doesn't actually run SQLite's `exec()`, but
-does more or less the same thing, except it lets you pass in a variadic number of parameters to be
-`bind()`ed at the end, and a type at the beginning—in addition to returning the SQLite result
-value, it also returns an array of that specified type, with its members containing the results of
-the query. This works with Jai's anonymous structs:~~
+```jai
+exec :: (
+    sql: string,                   // the SQL statement
+    params: ..Any,                 // parameters to bind
+    $code: Code = #code,null,      // run this code for each returned row
+    $ignore_returned_rows := false // ignore returned rows
+) -> Result
+```
+
+This allows the user to provide a `Code` that should be run for each row returned from the database,
+instead of a callback function. Additionally, it `bind()`s each of `params`, so your `sql`
+statement can include [parameter notation](https://www.sqlite.org/lang_expr.html#varparam).
+
+In addition, several procedures that wrap `exec()` are provided to make common tasks easy:
+ - `exec_row(T, sql, ..params) -> result, T, success` returns a single row of type `T`
+ - `exec_rows(T, sql, ..params, allocator=temp) -> result, [..] T` returns an array of rows of type `T`
+ - `exec_column(T, sql, ..params, allocator=temp) -> result, [..] T)` returns an array of values of type `T` from a single column
+ - `exec_value(T, sql, ..params) -> result, T, success` returns a single value of type `T`
+
+To execute a query that doesn't return any rows, you can just write:
+
+```jai
+some_id := 4;
+result := SQLite.exec("DELETE FROM User WHERE id = ?", 4);
+```
+
+`exec_row()` and `exec_rows()` work with Jai's anonymous structs, too:
 
 ```jai
 min_author_id := 2;
-result, rows := SQLite.exec(
+result, rows := SQLite.exec_rows(
     struct { author_name: string; count: int; total_score: int; },
     #string __SQL__
 SELECT
@@ -56,24 +76,11 @@ assert(result == .OK);
 for rows log("%1\n  posts: %2\n  total score: %3", it.author_name, it.count, it.total_score);
 ```
 
-~~The array returned by this version of `exec()` is allocated using the optional `allocator`
-parameter, **which is set to `temp` by default.**~~
-
-~~In the above example, all of the column names in the SQL statement match the member names of the
+In the above example, all of the column names in the SQL statement match the member names of the
 struct. This seems like a pretty good idea, so by default we check this at runtime (unless a given
-column is unnamed). If, for whatever reason, you don't want this behavior, you can call `exec()`
-with `check_column_names=false`.~~
-
-~~To execute a query that doesn't return any rows, you can just write:~~
-
-```jai
-some_id := 4;
-result := SQLite.exec("DELETE FROM User WHERE id = ?", 4);
-```
-
-~~If you `exec()` a SQL statement that returns anything, it will error. In case you want to do this
-for whatever reason (for example, setting `PRAGMA`s that can also be queried), pass
-`ignore_returned_rows=false` to `exec()`.~~
+column is unnamed). Thus, `exec_row()` and `exec_rows()` have an additional optional
+`check_column_names` parameter, which is `true` by default, but can be set to `false`, if, for
+whatever reason, you don't want this behavior.
 
 
 
