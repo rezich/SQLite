@@ -1,6 +1,5 @@
 SQLite for Jai
 ==============
-
 This is a module for Jai that allows you to interface with SQLite however works best for you.
 
 **However, this module is still in early development and lacks rigorous testing & some features.**
@@ -8,11 +7,14 @@ This is a module for Jai that allows you to interface with SQLite however works 
 ***This module is heavily under construction right now!!***
 
 
+
+
 C API bindings
 --------------
-
 By `#import`ing `SQLite`, you get access to [bindings for the SQLite C API](src/sqlite3.jai). These
 work exactly as you'd expect.
+
+
 
 
 Jai wrapper
@@ -74,9 +76,10 @@ for whatever reason (for example, setting `PRAGMA`s that can also be queried), p
 `ignore_returned_rows=false` to `exec()`.~~
 
 
-ORM
----
 
+
+Model cache
+-----------
 You can also `#import "SQLite"(USE_MODEL_CACHE=true);`, which, if you've set up your metaprogram
 correctly (see [the “overview” example](examples/overview)), allows you to more easily create
 Jai structs that can automatically interface with SQLite, like this:
@@ -97,7 +100,7 @@ My_Struct :: struct { using model: Model;
 ```
 
 All of the members in the above struct--except for the last one--will be automatically de/serialized
-to/from your SQLite database, when using [the ORM procedures](src/ORM.jai).
+to/from your SQLite database, when using [the model cache](src/Model_Cache.jai).
 
 `Cached(My_Other_Struct)` is used for foreign-key references. in the example above, `other` will
 serialize to SQL as `other_id`, which will contain the ID of the `My_Other_Struct` that `other`
@@ -111,36 +114,82 @@ See [the “overview” example](examples/overview) for a sample use of this mod
 contains the metaprogram, and [src/Main.jai](examples/overview/src/Main.jai) contains the actual
 program.
 
-**There is no automatic lazy-loading** or anything like that; if you retrieve a `My_Struct` row from
-the database, it won't load the associated `My_Other_Struct` into `other` for you. Instead, you must
-`fetch(*my_struct.other);`.
+
+### Model member notes
+There are various notes (`@xxx`) you can annotate the members of your model structs with, that make
+things easy for you:
+
+#### `@do_not_serialize`
+Indicates that this member should *not* be stored as a field in the SQLite table
+
+#### `@autofetch`
+Indicates that this member should be automatically fetched when an instance of this model struct is
+retrieved from the database.
+
+If a model `Model_Name` has a member `member_name` that is *both* `@autofetch` *and*
+`@do_not_serialize`, then you must provide a procedure called `fetch_member_name` ***within the body
+of the model struct***, that takes in a `*Cached(Model_Name)` and returns nothing. This procedure
+will be automatically executed when the instance is retrieved from the database.
+
+If the member is *not* `@do_not_serialize`, then the member type *must* be a `Cached(T)`, and it
+will be fetched automatically *every time* an instance of this model type is retrieved from the
+database.
+
+Here's an example:
+
+```jai
+Foo :: struct { using model: Model;
+    // other will be fetched automatically (if not NULL)
+    bar: Cached(Bar); @autofetch
+    // member_name will be "fetched" automatically, using the procedure below
+    baz: int; @autofetch @do_not_serialize
+    fetch_baz :: (using foo: *Cached(Foo)) { baz = 42; }
+}
+Bar :: struct { using model: Model; name: string; }
+
+// ...
+
+bar := insert(Bar.{name="BAR"});
+insert(Foo.{bar=bar});
+
+reset_model_cache(); // reset the cache so we can prove autofetching does in fact work
+
+foo := select_by_id(Foo, 1);
+assert(foo.bar.name == "BAR"); // proving bar was autofetched
+assert(foo.baz      == 42   ); // proving baz was autofetched
+```
+
+**Caution should be exercised** when using `@autofetch`! Only `@autofetch` if you're *absoutely
+certain* that:
+ - you will in fact use that member *every time* you retrieve a model instance from the database
+ - your models' `@autofetch` members do not have *any* circular dependencies 
+
+
 
 
 Context
 -------
-
 The basic SQLite wrapper will add a `sqlite: SQLIte_Info` to the `context`, which contains the
 current database connection and other such bookkeeping.
 
-Using the ORM will add an additional `sqlite_model_cache` struct to the `context`, which is a cache of rows
+Using the model cache will add an additional `sqlite_model_cache` struct to the `context`, which is a cache of rows
 retrieved from the database. You can flush this cache at any time using `reset_model_cache();`.
+
+
 
 
 TODO
 ====
-
  - fix the `overview` example
- - massively cull the `assert_ok()`s `ORM`, with something like an `automatically_assert_ok` field in `SQLite_Info`
- - delete ~~a ton of~~ ~~even more~~ *yet even more* code from `ORM` now that we have a better `exec()` and such
- - allow `exec()` to accept a primitive type for `row_type`, if only one column is being asked for and its type matches
+ - massively cull the `assert_ok()`s, with something like an `automatically_assert_ok` field in `SQLite_Info`
+ - delete ~~a ton of~~ ~~even more~~ *yet even more* code from `Model_Cache` now that we have a better `exec()` and such
  - `@default=value` for model fields
  - more compile-time checking of things to make usage more pleasant, e.g. help the user if they forget to `#as` the `using #as model: Model;` in their models
- - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`/...? `ORM.Nullable(T)`...? ...?
- - `ORM.set(T, field_name, value, where, ..params)`
- - `ORM.delete_from(T, where, ..params)`
- - `ORM.insert(objs)`
+ - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`/...? `Nullable(T)`...? ...?
+ - `set(T, field_name, value, where, ..params)`
+ - `delete_from(T, where, ..params)`
+ - `insert(objs)`
  - (...)
- - some way of doing `operator ==` with `ORM.Cached(T)`s
  - maybe just huck the SQLite error message into the `context`?
  - maybe have the wrapper functions return enums that are subsets of `Result`? (`#must`...?)
  - more generally, figure out if there's a more ergonomic way to handle SQLite result and/or error passing

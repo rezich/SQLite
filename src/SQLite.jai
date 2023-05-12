@@ -128,7 +128,7 @@ exec :: (
     should_return := false;
     for statement {
         assert(ignore_returned_rows);
-        statement_scope : Code : #this; // very cool if this wroks
+        statement_scope : Code : #this; // very cool if this works
         #if code != #code,null then #insert,scope() code;
         /*#if callback != null {
             #if only_use_first_callback_argument {
@@ -303,8 +303,8 @@ serializable_members_of :: (info: *Type_Info_Struct) -> [..] Type_Info_Struct_Me
         #if USE_MODEL_CACHE || FROM_METAPROGRAM { if is_a_model(info) && member_is_foreign_key(member) then is_a_valid_type = true; }
         if !is_a_valid_type then continue;
         #if USE_MODEL_CACHE || FROM_METAPROGRAM {
-            for member.notes if it == NOTE_DO_NOT_SERIALIZE ||
-                                it == NOTE_FETCH    then continue member;
+            for member.notes if it == NOTE_DO_NOT_SERIALIZE /*||
+                                it == NOTE_FETCH          */ then continue member;
         }
         array_add(*members, member);
     }

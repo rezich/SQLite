@@ -23,7 +23,7 @@ reset_model_cache()
 
 NOTE_DO_NOT_SERIALIZE :: "do_not_serialize";
 NOTE_AUTOFETCH        :: "autofetch";
-NOTE_FETCH            :: "fetch";
+//NOTE_FETCH            :: "fetch";
 
 Model :: struct {
     id: s64;
@@ -211,6 +211,7 @@ XX, /* 1 */ `T);
     #insert -> string {
         sb: String_Builder;
         fetches_and_autofetches: [..] string;
+        autofetches_that_use_procs: [..] string;
 
         // get members with @autofetch
         for member: type_info(`T).members {
@@ -220,6 +221,7 @@ XX, /* 1 */ `T);
             is_do_not_serialize      := field_is_do_not_serialize(`T, member.name);
             if is_autofetch {
                 if (is_foreign_key || is_serializable) && !is_do_not_serialize then array_add(*fetches_and_autofetches, member.name);
+                else if is_do_not_serialize then array_add(*autofetches_that_use_procs, member.name);
                 else assert(false, "%1 member %2 is not fetchable!",
                 /* 1 */ `T,
                 /* 2 */ member.name);
@@ -245,7 +247,9 @@ XX, /* 1 */ `T);
         for fetches_and_autofetches print_to_builder(*sb, #string XX
     `_fetch(*`cached_obj.%1);
 XX,     /* 1 */ it);
-
+        for autofetches_that_use_procs print_to_builder(*sb, #string XX
+    `T.fetch_%1(*`cached_obj);
+XX,     /* 1 */ it);
         return builder_to_string(*sb);
     };
 };
@@ -276,7 +280,6 @@ select_from :: (
     $T         :  Type, // must be $T/Model
     $where     := "",
      params    :  ..Any,
-    //$order_by : struct { expr: string; dir: enum { ASC; DESC; } } = .{"", .ASC},
     $order_by  :  Order_By = .{},
     $limit     := 0,    // must not be 1
      offset    := 0,
@@ -308,7 +311,6 @@ select_from :: (
     $T        :  Type, // must be $T/Model
     $where    := "",
      params   :  ..Any,
-    //$order_by : struct { expr: string; dir: enum { ASC; DESC; } } = .{"", .ASC},
     $order_by  :  Order_By = .{},
     $limit    := 0,    // must be 1
      offset   := 0,
