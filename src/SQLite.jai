@@ -311,11 +311,6 @@ fetch_value :: ($Value_Type: Type, statement: Statement) -> Value_Type
 }
 
 fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
-    #if (USE_MODEL_CACHE || FROM_METAPROGRAM) && #run is_a_model(T) {
-        obj.id       = column_int64(statement, 0);
-        obj.created  = column_int  (statement, 1);
-        obj.modified = column_int  (statement, 2);
-    }
     #insert -> string {
         sb: String_Builder;
         column_number := 0;
@@ -348,6 +343,11 @@ XX,         /* 1 */ it.name,
             column_number += 1;
         }
         return builder_to_string(*sb);
+    }
+    #if (USE_MODEL_CACHE || FROM_METAPROGRAM) && #run is_a_model(T) {
+        obj.id       = column_int64(statement, 0);
+        obj.created  = column_int  (statement, 1);
+        obj.modified = column_int  (statement, 2);
     }
 }
 

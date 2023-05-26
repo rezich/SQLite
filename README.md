@@ -146,9 +146,9 @@ Here's an example:
 
 ```jai
 Foo :: struct { using model: Model;
-    // other will be fetched automatically (if not NULL)
+    // bar will be fetched automatically (if not NULL)
     bar: Cached(Bar); @autofetch
-    // member_name will be "fetched" automatically, using the procedure below
+    // baz will be "fetched" automatically, using the procedure below
     baz: int; @autofetch @do_not_serialize
     fetch_baz :: (using foo: *Cached(Foo)) { baz = 42; }
 }
@@ -187,21 +187,36 @@ retrieved from the database. You can flush this cache at any time using `reset_m
 
 TODO
 ====
+
+General
+-------
  - fix the `overview` example
  - massively cull the `assert_ok()`s, with something like an `automatically_assert_ok` field in `SQLite_Info`
  - delete ~~a ton of~~ ~~even more~~ *yet even more* code from `Model_Cache` now that we have a better `exec()` and such
- - `@default=value` for model fields
  - more compile-time checking of things to make usage more pleasant, e.g. help the user if they forget to `#as` the `using #as model: Model;` in their models
- - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`/...? `Nullable(T)`...? ...?
- - `set(T, field_name, value, where, ..params)`
- - `delete_from(T, where, ..params)`
- - `insert(objs)`
- - (...)
- - maybe just huck the SQLite error message into the `context`?
- - maybe have the wrapper functions return enums that are subsets of `Result`? (`#must`...?)
- - more generally, figure out if there's a more ergonomic way to handle SQLite result and/or error passing
- - **add some kind of automatic migration system**—we can do SQLite stuff at compile time, so why not?
  - actually try this out with slightly non-trivial things like threading and such and see if it actually is good at all lmao
  - finish wrapping the rest of the SQLite API
  - test the code, like, at all
  - write documentation
+
+Possible model cache extensions
+-------------------------------
+ - `set(T, field_name, value, where, ..params)`
+ - `delete_from(T, where, ..params)`
+ - `insert(objs)`
+
+Big ideas
+---------
+ - work on the automatic migration system -- we can do SQLite stuff at compile time, so why not store it in a SQLite database?
+    - eventually -- in the *distant* future -- we could resolve conflicts between migration dbs, creating a new, "merged" migration db
+
+Notes
+-----
+ - `@default=value` for model fields
+ - figure out what to do about `NULL` values. consider something like `@null_if_default`/`@null_if=value`/`@not_null`/...? `Nullable(T)`...? ...?
+ 
+Things to explore
+-----------------
+ - maybe just huck the SQLite error message into the `context`?
+ - maybe have the wrapper functions return enums that are subsets of `Result`? (`#must`...?)
+ - more generally, figure out if there's a more ergonomic way to handle SQLite result and/or error passing
