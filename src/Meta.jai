@@ -36,9 +36,9 @@ SQL,                        /* 1 */ it.name);
                             for it.notes {
                                 found, key, value := split_from_left(it, #char "=");
                                 if !found continue;
+                                is_valid_fk_action :: (value: string) -> bool { for enum_names(Foreign_Key_Action) if it == value then return true; assert(false, "Invalid Foreign_Key_Action in Cached(T) note."); return false; }
                                 if key == "on_update" && is_valid_fk_action(value) then on_update = replace(value, "_", " ");
                                 if key == "on_delete" && is_valid_fk_action(value) then on_delete = replace(value, "_", " ");
-                                is_valid_fk_action :: (value: string) -> bool { for enum_names(Foreign_Key_Action) if it == value then return true; assert(false, "Invalid Foreign_Key_Action in Cached(T) note."); return false; }
                             }
                             print_to_builder(*sb_fk, #string SQL
 ,FOREIGN KEY(%1_id) REFERENCES %2(id)%3%4
@@ -86,6 +86,21 @@ SQL,                /* 1 */ ifx strict_table then " STRICT");
             phase := cast(*Message_Phase) message;
             if phase.phase == .TYPECHECKED_ALL_WE_CAN {
                 if !generated_code {
+                    iterate_model_names :: (str: string) -> string #expand {
+                        sb: String_Builder;
+                        for `model_names print_to_builder(*sb, str, it);
+                        return builder_to_string(*sb);
+                    }
+                    iterate_table_schemas :: (str: string) -> string #expand {
+                        sb: String_Builder;
+                        for `table_schemas print_to_builder(*sb, str, it);
+                        return builder_to_string(*sb);
+                    }
+                    add_to_build :: (w: Workspace, args: ..Any) {
+                        sb: String_Builder;
+                        for args print_to_builder(*sb, "%", it);
+                        add_build_string(builder_to_string(*sb), w);
+                    }
                     quick_sort(model_names, compare_strings);
                     add_to_build(message.workspace, #string XX
 SQLite_Model_Cache :: struct {
@@ -111,22 +126,6 @@ XX), #string XX
 XX                  );
                     #if MAKE_MIGRATIONS then make_migrations(model_names, table_schemas);
                     generated_code = true;
-
-                    iterate_model_names :: (str: string) -> string #expand {
-                        sb: String_Builder;
-                        for `model_names print_to_builder(*sb, str, it);
-                        return builder_to_string(*sb);
-                    }
-                    iterate_table_schemas :: (str: string) -> string #expand {
-                        sb: String_Builder;
-                        for `table_schemas print_to_builder(*sb, str, it);
-                        return builder_to_string(*sb);
-                    }
-                    add_to_build :: (w: Workspace, args: ..Any) {
-                        sb: String_Builder;
-                        for args print_to_builder(*sb, "%", it);
-                        add_build_string(builder_to_string(*sb), w);
-                    }
                 }
             }
     }

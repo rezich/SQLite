@@ -104,17 +104,17 @@ exec :: (
     for params {
         if it.type.type == {
             case .BOOL;
-                result =     bind(statement, param_number, <<cast(*   bool) it.value_pointer);
+                result =     bind(statement, param_number, (cast(*   bool) it.value_pointer).*);
             case .ENUM; #through;
             case .INTEGER;
                 if it.type.runtime_size <= 4
-                    result = bind(statement, param_number, <<cast(*    s32) it.value_pointer);
+                    result = bind(statement, param_number, (cast(*    s32) it.value_pointer).*);
                 else
-                    result = bind(statement, param_number, <<cast(*    s64) it.value_pointer);
+                    result = bind(statement, param_number, (cast(*    s64) it.value_pointer).*);
             case .FLOAT;
-                result =     bind(statement, param_number, <<cast(*float64) it.value_pointer);
+                result =     bind(statement, param_number, (cast(*float64) it.value_pointer).*);
             case .STRING;
-                result =     bind(statement, param_number, <<cast(* string) it.value_pointer);
+                result =     bind(statement, param_number, (cast(* string) it.value_pointer).*);
         }
         if result != .OK then return result;
         param_number += 1;

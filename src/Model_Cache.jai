@@ -319,7 +319,7 @@ select_from :: (
     $T        :  Type, // must be $T/Model
     $where    := "",
      params   :  ..Any,
-    $order_by  :  Order_By = .{},
+    $order_by :  Order_By = .{},
     $limit    := 0,    // must be 1
      offset   := 0,
     $fetch    := ""
@@ -391,7 +391,7 @@ member_is_foreign_key :: (member: Type_Info_Struct_Member) -> bool {
 
 get_foreign_key_name_from :: (member: Type_Info_Struct_Member, model_name: string) -> string {
     member_info := (cast(*Type_Info_Struct) member.type);
-    return (cast(*Type_Info_Struct) <<cast(**Type_Info) *member_info.constant_storage[member_info.specified_parameters[0].offset_into_constant_storage]).name; // thanks, shwa!
+    return (cast(*Type_Info_Struct) (cast(**Type_Info) *member_info.constant_storage[member_info.specified_parameters[0].offset_into_constant_storage]).*).name; // thanks, shwa!
 }
 
 has_autofetches :: ($T: Type) -> bool {
