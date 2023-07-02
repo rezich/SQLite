@@ -36,14 +36,21 @@ Cached :: struct(type: Type) /*#modify { return is_a_model(type); }*/ {
     fetch_id: s64;
     using pointer: *type;
 }
-operator? :: (cached_obj: $T/Cached, when_null: Code, caller_code := #caller_code) -> T #expand {
+
+
+operator|| :: (cached_obj: $T/Cached, when_null: Code, caller_code := #caller_code) -> T #expand {
     if is_null(cached_obj) then #insert,scope(caller_code) when_null;
     return cached_obj;
 }
-operator? :: (cached_objs: [] $T/Cached, when_null: Code, caller_code := #caller_code) -> [] T #expand {
+operator|| :: (cached_objs: [] $T/Cached, when_null: Code, caller_code := #caller_code) -> [] T #expand {
     if cached_objs.count == 0 then #insert,scope(caller_code) when_null;
     return cached_objs;
 }
+
+
+operator! :: inline (cached_obj:     $T/Cached) -> bool { return is_null(cached_obj);    }
+operator! :: inline (cached_objs: [] $T/Cached) -> bool { return cached_objs.count == 0; }
+
 operator== :: (a: $T/Cached, b: T) -> bool { return a.fetch_id == b.fetch_id && a.pointer == b.pointer; }
 
 init_model_cache :: () #expand {
