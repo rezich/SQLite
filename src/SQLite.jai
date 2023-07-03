@@ -122,6 +122,15 @@ exec :: (
 
     should_return := false;
     for statement {
+        /*
+        column_count  :: ()                   -> s32         #expand { return column_count (`statement);                }
+        column_double :: (column_number: s32) -> float64     #expand { return column_double(`statement, column_number); }
+        column_int    :: (column_number: s32) -> s32         #expand { return column_int   (`statement, column_number); }
+        column_int64  :: (column_number: s32) -> s64         #expand { return column_int64 (`statement, column_number); }
+        column_text   :: (column_number: s32) -> string      #expand { return column_text  (`statement, column_number); }
+        column_name   :: (column_number: s32) -> string      #expand { return column_name  (`statement, column_number); }
+        column_type   :: (column_number: s32) -> Column_Type #expand { return column_type  (`statement, column_number); }
+        */
         assert(ignore_returned_rows);
         STATEMENT_SCOPE : Code : #this; // very cool that this works
         #if code != #code,null then #insert,scope() code;
@@ -130,14 +139,6 @@ exec :: (
 
     result = finalize(statement);
     return result;
-
-    column_count  :: ()                   -> s32         #expand { return column_count (`statement);                }
-    column_double :: (column_number: s32) -> float64     #expand { return column_double(`statement, column_number); }
-    column_int    :: (column_number: s32) -> s32         #expand { return column_int   (`statement, column_number); }
-    column_int64  :: (column_number: s32) -> s64         #expand { return column_int64 (`statement, column_number); }
-    column_text   :: (column_number: s32) -> string      #expand { return column_text  (`statement, column_number); }
-    column_name   :: (column_number: s32) -> string      #expand { return column_name  (`statement, column_number); }
-    column_type   :: (column_number: s32) -> Column_Type #expand { return column_type  (`statement, column_number); }
 }
 
 // this one returns a single Row_Type

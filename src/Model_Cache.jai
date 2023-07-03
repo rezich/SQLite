@@ -298,13 +298,12 @@ select_from :: (
     $order_by  :  Order_By = .{},
     $limit     := 0,    // must not be 1
      offset    := 0,
-    $fetch     := "",
-     allocator := temp
+    $fetch     := ""
 ) -> [..] Cached(T)
 #modify { return is_a_model(T) && limit != 1; } {
     SQL_STATEMENT :: #run generate_sql_statement_for_select_from();
 
-    rows: [..] Cached(T); rows.allocator = allocator;
+    rows: [..] Cached(T); rows.allocator = temp;
     obj_pointer: *T;
     obj: T;
     cached_obj: Cached(T);
