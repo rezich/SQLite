@@ -131,6 +131,12 @@ XX                  );
     }
 }
 
+reset_build :: () {
+    array_reset(*model_names);
+    array_reset(*table_schemas);
+    generated_code = false;
+}
+
 #scope_file
 
 model_names:   [..] string;
