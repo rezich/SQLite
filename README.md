@@ -4,6 +4,8 @@ This is a module for Jai that allows you to interface with SQLite however works 
 
 **However, this module is still in early development and lacks rigorous testing & some features.**
 
+***The example is out of date and broken -- [look here](https://github.com/rezich/Newf/tree/main/examples/dorknews) for a more up-to-date example instead!***
+
 
 
 
@@ -88,13 +90,13 @@ whatever reason, you don't want this behavior.
 Model cache
 -----------
 You can also `#import "SQLite"(USE_MODEL_CACHE=true);`, which, if you've set up your metaprogram
-correctly (see [the “overview” example](examples/overview)), allows you to more easily create
+correctly ~~(see [the “overview” example](examples/overview))~~, allows you to more easily create
 Jai structs that can automatically interface with SQLite, like this:
 
 ```jai
 using SQLite;
 
-My_Struct :: struct { using model: Model;
+My_Struct :: struct { using #as model: Model;
     name: string;
     boolean: bool;
     number: int;
@@ -117,9 +119,9 @@ There's no need to include your own ID member, as that's included for you in `Mo
 `created` and `modified` timestamps. (The timestamps are all handled in SQLite, and, for now,
 returned to you in Jai as UNIX timestamps.)
 
-See [the “overview” example](examples/overview) for a sample use of this module. note that [overview.jai](examples/overview/overview.jai)
+~~See [the “overview” example](examples/overview) for a sample use of this module. note that [overview.jai](examples/overview/overview.jai)
 contains the metaprogram, and [src/Main.jai](examples/overview/src/Main.jai) contains the actual
-program.
+program.~~
 
 
 ### Model member notes
@@ -145,14 +147,14 @@ database.
 Here's an example:
 
 ```jai
-Foo :: struct { using model: Model;
+Foo :: struct { using #as model: Model;
     // bar will be fetched automatically (if not NULL)
     bar: Cached(Bar); @autofetch
     // baz will be "fetched" automatically, using the procedure below
     baz: int; @autofetch @do_not_serialize
     fetch_baz :: (using foo: *Cached(Foo)) { baz = 42; }
 }
-Bar :: struct { using model: Model; name: string; }
+Bar :: struct { using #as model: Model; name: string; }
 
 // ...
 
