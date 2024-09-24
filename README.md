@@ -1,10 +1,6 @@
 SQLite for Jai
 ==============
-This is a module for Jai that allows you to interface with SQLite however works best for you.
-
-**However, this module is still in early development and lacks rigorous testing & some features.**
-
-***The example is out of date and broken -- [look here](https://github.com/rezich/Newf/tree/main/examples/dorknews) for a more up-to-date example instead!***
+This is a Jai SQLite module that has some additional experimental ORM-like features.
 
 
 
@@ -51,7 +47,8 @@ To execute a query that doesn't return any rows, you can just write:
 
 ```jai
 some_id := 4;
-result := SQLite.exec("DELETE FROM User WHERE id = ?", 4);
+result  := SQLite.exec("DELETE FROM User WHERE id = ?", some_id);
+assert(result == .OK);
 ```
 
 `exec_row()` and `exec_rows()` work with Jai's anonymous structs, too:

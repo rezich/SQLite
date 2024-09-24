@@ -18,7 +18,7 @@ SQLite_Info :: struct {
     is_open:   bool;
     pragmas:   [..] string;
 }
-#if !FROM_METAPROGRAM #add_context sqlite: SQLite_Info;
+/*#if !FROM_METAPROGRAM */#add_context sqlite: SQLite_Info;
 
 
 set_pragmas :: (new_pragmas: [] string) -> Result {
@@ -269,7 +269,7 @@ for_expansion :: (statement: Statement, body: Code, flags: For_Flags) #expand {
     }}
 }
 
-optional_cleanup :: () {
+sqlite_optional_cleanup :: () {
     #if USE_MODEL_CACHE then reset_model_cache(reinit=false);
     array_free(context.sqlite.pragmas);
 }
