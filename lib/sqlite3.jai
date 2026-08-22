@@ -475,11 +475,15 @@ sqlite3_temp_directory: *s8;
 
 sqlite3_data_directory: *s8;
 
-sqlite3_win32_set_directory :: (type: u32, zValue: *void) -> s32 #foreign sqlite;
+#if OS == .WINDOWS {
 
-sqlite3_win32_set_directory8 :: (type: u32, zValue: *s8) -> s32 #foreign sqlite;
+    sqlite3_win32_set_directory :: (type: u32, zValue: *void) -> s32 #foreign sqlite;
 
-sqlite3_win32_set_directory16 :: (type: u32, zValue: *void) -> s32 #foreign sqlite;
+    sqlite3_win32_set_directory8 :: (type: u32, zValue: *s8) -> s32 #foreign sqlite;
+
+    sqlite3_win32_set_directory16 :: (type: u32, zValue: *void) -> s32 #foreign sqlite;
+
+}
 
 sqlite3_get_autocommit :: (unk0: *sqlite3) -> s32 #foreign sqlite;
 
