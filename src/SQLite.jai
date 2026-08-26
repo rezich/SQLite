@@ -8,6 +8,7 @@ Column_Type        :: enum { INTEGER; FLOAT; BLOB; NULL; TEXT; }
 Foreign_Key_Action :: enum { NO_ACTION; RESTRICT; SET_NULL; SET_DEFAULT; CASCADE; }
 
 #load "Result.jai";
+#load "Model_Cache.jai";
 
 assert_ok :: (result: Result, loc := #caller_location) { assert(result == .OK, "%: %", result, errmsg(), loc=loc); }
 
@@ -322,7 +323,7 @@ fetch_row :: (obj: *$T, statement: Statement, $check_column_names := false) {
     {
         database_column_name := column_name(statement, %1);
         MEMBER_NAME :: "%2";
-        assert(database_column_name == "" || database_column_name == MEMBER_NAME, "Column name mismatch; expected %%1, got %%2",
+        assert(database_column_name == "" || database_column_name == MEMBER_NAME, "Column name mismatch; expected %1, got %2",
     /* 1 */database_column_name,
     /* 2 */MEMBER_NAME);
     }
